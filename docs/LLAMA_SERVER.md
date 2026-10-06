@@ -37,6 +37,7 @@ Filenames come from `.env` (`CODER_MODEL`, `QWEN25_CODER_MODEL`, `VISION_MODEL`,
 | `--host 0.0.0.0 --port 8080` | all | Listen inside the container network. |
 | `-c 16384 --parallel 2` | coder (`qwen3-1.7b`) | **Total** context, shared by 2 slots: 8192 tokens per request (see below). `CODER_CTX` / `CODER_PARALLEL` in `.env`. |
 | `-c 8192 --parallel 4` | qwen25-coder | 4 slots of 2048 tokens. |
+| `--cache-ram 1024` / `512` | coder / qwen25-coder | Caps the host-RAM prompt cache in MiB (llama-server's default is 8192). See "Memory" below. `CODER_CACHE_RAM` / `QWEN25_CACHE_RAM` in `.env`. |
 | `--cont-batching` | both coder pools | Batch concurrent requests into one forward pass. Already the default; kept for clarity. |
 | `--jinja --reasoning off` | coder | Use the model's own template (the default, set explicitly because tool calling depends on it) and keep Qwen3's thinking off so answers and tool calls land in `content` / `tool_calls`. `CODER_REASONING` in `.env` overrides. |
 | `--mmproj <file>` | vision | The image projector (vision encoder) that pairs with the language model. |
@@ -152,12 +153,14 @@ Colima VM, 4 vCPU, 7.7 GiB RAM, CPU only, b11434:
 
 | Node | Resident memory | Speed |
 | --- | --- | --- |
-| coder (Qwen3-1.7B Q4_K_M, `-c 16384`) | ~3.3 GiB (2.1 GiB at `-c 8192`) | ~50 tokens/s generation, ~190 tokens/s prompt |
+| coder (Qwen3-1.7B Q4_K_M, `-c 16384`, `--cache-ram 1024`) | ~2.8 GiB idle, plateaus at ~3.8 GiB under tool-calling load | ~50 tokens/s generation, ~190 tokens/s prompt |
 | vision (PaddleOCR-VL 1.6 + F16 mmproj) | ~1.5 GiB | 13 to 14 tokens/s generation; **image prompts ~2.8 tokens/s**: 110 to 180 s per image |
 | embed (nomic Q4_K_M) | ~100 to 150 MiB | |
 | qwen25-coder (Qwen2.5-Coder-1.5B Q4_K_M, `-c 8192`) | 2.3 GiB just after start; 1.25 GiB measured after hours of running | ~56 tokens/s generation |
 
-The four nodes (one per pool) together use ~5.9 GiB of the 7.7 GiB VM: there is no room for a second Qwen3 node or a bigger model. A 7B Q4_K_M model needs ~4.5 to 5 GiB per node.
+The four nodes (one per pool) together peak around 6.4 GiB of the 7.7 GiB VM: there is no room for a second Qwen3 node or a bigger model, and the vision pool is best left off (`just up` does) unless OCR is being used.
+
+**Memory: the prompt cache.** Besides the fixed KV cache, llama-server keeps recent prompts in host RAM to skip re-processing them (that is what makes a repeat tool-calling request 5 s instead of 25 s). Its default cap is 8192 MiB, more than this VM has. With ~5,200-token tool prompts the Qwen3 node grew to 4.3 GiB and the kernel's OOM killer took it (`dmesg`: `Out of memory: Killed process ... (llama-server) ... anon-rss:4342592kB`); requests in the following seconds got `503 Loading model` while it restarted. `--cache-ram 1024` bounds it: measured with `RssAnon` over three full `just examples-check` runs, 2.83 → 3.49 → 3.76 → 3.78 GiB, no restarts. `docker stats` right after a restart overstates memory (it counts the model file's page cache); `grep RssAnon /proc/1/status` inside the container is what the OOM killer counts. A 7B Q4_K_M model needs ~4.5 to 5 GiB per node.
 
 The vision encoder is the slow part on CPU: the 900x420 test invoice (493 prompt tokens, mostly image) took 175 s to read and 4 s to write out. Long timeouts are already in place (600 s at KrakenD and nginx), but real documents want a GPU.
 

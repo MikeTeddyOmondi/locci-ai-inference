@@ -11,7 +11,7 @@ Each gateway model id names the model running in its pool. Everything runs in th
 | Gateway id | Pool | Running | Status (measured on this stack) |
 | --- | --- | --- | --- |
 | `qwen2.5-coder-1.5b` | qwen25-coder (1 node) | Qwen2.5-Coder-1.5B-Instruct Q4_K_M (1.0 GB) | Code generation, ~56 tokens/s. **Cannot call tools** (see below). 1.25 to 2.3 GiB resident. |
-| `qwen3-1.7b` | coder (1 node) | **Qwen3-1.7B** Q4_K_M (1.28 GB, ggml-org), `--reasoning off` | Chat and code ~50 tokens/s generation, ~190 tokens/s prompt. **Tool calling passes** every `just tools-api` / `just tools-sdk` check, 3 runs in a row. ~3.3 GiB resident (8192 tokens per request). |
+| `qwen3-1.7b` | coder (1 node) | **Qwen3-1.7B** Q4_K_M (1.28 GB, ggml-org), `--reasoning off` | Chat and code ~50 tokens/s generation, ~190 tokens/s prompt. **Tool calling passes** every `just tools-api` / `just tools-sdk` check, 3 runs in a row. ~2.8 to 3.8 GiB resident (8192 tokens per request, prompt cache capped at 1 GiB). |
 | `baidu-ocr-vision` | vision | **PaddleOCR-VL 1.6** (0.94 GB) + mmproj (0.88 GB), `--temp 0` | `just ocr-api` passes: exact text from an invoice image, and a 3x3 table. **Slow on CPU**: 110 to 180 s per image (see below). ~1.5 GiB resident. |
 | `embedding-nomic` | embed | nomic-embed-text v1.5 Q4_K_M (80 MB) | 768 dims. Inputs over 512 tokens fail until `-ub` is raised. |
 
@@ -19,7 +19,7 @@ Each gateway model id names the model running in its pool. Everything runs in th
 
 - **Tool calling:** forced calls (`tool_choice: "required"`) are parsed into `tool_calls`, tool results round-trip into a text answer, and streamed calls reassemble from deltas, through curl and through the AI SDK. With `"auto"` it called the tool when the question needed it (3 of 3) and answered in plain text for an unrelated prompt with tools present (3 of 3).
 - **Thinking:** off via `--reasoning off`; no `<think>` text or `reasoning_content` in responses. Set `CODER_REASONING=on` in `.env` to enable it (answers get slower and longer; tool calls may then appear in `reasoning_content`).
-- **Memory:** ~3.3 GiB with `-c 16384 --parallel 2` (8192 tokens per request, needed once tool schemas are in the prompt; ~2.1 GiB at `-c 8192`), against ~1.25 GiB for Qwen2.5-Coder; Qwen3 has a larger KV cache per token.
+- **Memory:** ~2.8 GiB idle and ~3.8 GiB under tool-calling load with `-c 16384 --parallel 2 --cache-ram 1024` (8192 tokens per request, needed once tool schemas are in the prompt), against ~1.25 GiB for Qwen2.5-Coder. Without the `--cache-ram` cap the prompt cache grew until the OOM killer took the node; see [LLAMA_SERVER.md](LLAMA_SERVER.md#measured-on-this-machine).
 
 ### PaddleOCR-VL 1.6 (vision pool), measured
 

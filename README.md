@@ -89,7 +89,7 @@ All on llama.cpp `server-b11434` (pinned), CPU only in the local Colima VM (4 vC
 
 | Requested `model` | Pool | Running | Measured here |
 | --- | --- | --- | --- |
-| `qwen3-1.7b` | `/coder` (1 node) | Qwen3-1.7B Q4_K_M, `--reasoning off`, 8192 tokens per request | ~50 tokens/s; tool calling passes every check; ~3.3 GiB |
+| `qwen3-1.7b` | `/coder` (1 node) | Qwen3-1.7B Q4_K_M, `--reasoning off`, 8192 tokens per request | ~50 tokens/s; tool calling passes every check; 2.8 to 3.8 GiB |
 | `qwen2.5-coder-1.5b` | `/qwen25-coder` (1 node) | Qwen2.5-Coder-1.5B-Instruct Q4_K_M | ~56 tokens/s; code generation; **cannot call tools**; 1.25 to 2.3 GiB |
 | `baidu-ocr-vision` | vision (`--profile vision`) | PaddleOCR-VL 1.6 + mmproj | Exact text and table recognition on the fixtures; 2 to 3 min per new image on CPU |
 | `embedding-nomic` | embed (`--profile embed`) | nomic-embed-text v1.5 Q4_K_M | 768 dims; inputs over 512 tokens fail until `-ub` is raised |
