@@ -1,3 +1,4 @@
 models/*
 !models/.gitkeep
 .env
+locci-ai-gateway/bin/

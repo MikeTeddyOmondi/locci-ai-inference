@@ -30,6 +30,17 @@ just meter       # follow per-tenant usage
 just down
 ```
 
+Working on the Go router itself, like `locci-bundler`'s recipes:
+
+```bash
+just check       # gofmt check, vet, test
+just build       # -> locci-ai-gateway/bin/locci-ai-gateway
+just run         # build, then run on :8090 against the stack's nginx (127.0.0.1:8082)
+just run-bin     # same, via `go run`
+just chat-local  # stream a chat straight to the host-run router (no KrakenD; X-Locci-Tenant set by hand)
+just up-gateway  # rebuild and restart the router container instead
+```
+
 ## Quick start
 
 Auth comes from [locci-auth](../locci-auth) running locally. Its users are the tenants: KrakenD validates the ES256 access token against locci-auth's JWKS and propagates `properties.id` as `X-Locci-Tenant` (and `properties.email` as `X-Locci-Email`).
@@ -80,7 +91,7 @@ git config core.hooksPath .githooks
 ```bash
 cd locci-ai-gateway
 go test ./...
-UPSTREAM_URL=http://localhost:8082 LISTEN_ADDR=:8090 go run .   # point at any OpenAI-compatible upstream
+UPSTREAM_URL=http://localhost:8082 LISTEN_ADDR=:8090 go run .   # nginx is published on 127.0.0.1:8082
 ```
 
 ## Changes from REFERENCE.md

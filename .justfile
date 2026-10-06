@@ -54,8 +54,8 @@ logs *services:
 meter:
     docker compose logs -f --no-log-prefix locci-ai-gateway | grep --line-buffered 'meter tenant='
 
-# Rebuild and restart just the router after editing its Go code.
-gateway:
+# Rebuild the router image and restart its container after editing its Go code.
+up-gateway:
     docker compose up --build -d --wait locci-ai-gateway
 
 # Restart KrakenD after editing krakend/krakend.json (validates first).
@@ -90,12 +90,64 @@ chat prompt="Write a Go function to reverse a string." model="qwen-coder-7b":
 list-models:
     @curl -s {{edge}}/v1/models -H "Authorization: Bearer $(scripts/locci-auth-token.sh)" | python3 -m json.tool
 
-# -- router development -------------------------------------------------------
+# -- gateway (Go router) ------------------------------------------------------
+# The host-run router listens on :8090 and talks to the stack's nginx, which
+# compose publishes on 127.0.0.1:8082. Override with UPSTREAM_URL / LISTEN_ADDR.
 
-# Vet and test the Go router.
+gw := "locci-ai-gateway"
+upstream := env_var_or_default("UPSTREAM_URL", "http://localhost:8082")
+listen := env_var_or_default("LISTEN_ADDR", ":8090")
+
+# Create ./bin and sync go.mod/go.sum
+setup:
+    mkdir -p {{gw}}/bin
+    cd {{gw}} && go mod tidy
+
+# Build the router binary to locci-ai-gateway/bin/locci-ai-gateway
+build:
+    mkdir -p {{gw}}/bin
+    cd {{gw}} && go build -o ./bin/locci-ai-gateway .
+
+# Build, then run the binary on the host (needs `just up` for nginx and the pools)
+run: build
+    UPSTREAM_URL={{upstream}} LISTEN_ADDR={{listen}} ./{{gw}}/bin/locci-ai-gateway
+
+# Run from source with `go run`, no binary
+run-bin:
+    cd {{gw}} && UPSTREAM_URL={{upstream}} LISTEN_ADDR={{listen}} go run .
+
+# Sync go.mod/go.sum with the imports actually used
+tidy:
+    cd {{gw}} && go mod tidy
+
+# Format all Go source in place
+fmt:
+    gofmt -w {{gw}}
+
+# Fail if any Go source needs formatting
+fmt-check:
+    @out=$(gofmt -l {{gw}}); if [ -n "$out" ]; then echo "$out"; exit 1; fi
+
+vet:
+    cd {{gw}} && go vet ./...
+
 test:
-    cd locci-ai-gateway && go vet ./... && go test ./...
+    cd {{gw}} && go test ./...
 
-# Run the router on the host on :8090 against any OpenAI-compatible upstream URL.
-run upstream:
-    cd locci-ai-gateway && UPSTREAM_URL={{upstream}} LISTEN_ADDR=:8090 go run .
+# Everything CI should run
+check:
+    just fmt-check
+    just vet
+    just test
+
+# Send a streamed chat straight to the host-run router (skips KrakenD; tenant set by hand)
+chat-local prompt="Say hi in five words." tenant="dev-local":
+    #!/usr/bin/env sh
+    set -eu
+    BODY=$(python3 -c 'import json,sys; print(json.dumps({"model":"qwen-coder-7b","stream":True,"max_tokens":64,"messages":[{"role":"user","content":sys.argv[1]}]}))' '{{prompt}}')
+    curl -sN http://localhost{{listen}}/v1/chat/completions \
+      -H 'X-Locci-Tenant: {{tenant}}' -H 'Content-Type: application/json' -d "$BODY"
+
+# Remove build artefacts
+clean:
+    rm -rf {{gw}}/bin
