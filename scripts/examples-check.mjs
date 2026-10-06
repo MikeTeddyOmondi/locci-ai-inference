@@ -59,14 +59,14 @@ async function events(messages) {
 
 // --- static: typecheck + web build ------------------------------------------
 if (!process.argv.includes('--no-static')) {
-  for (const pkg of ['@locci/example-api', '@locci/example-cli', '@locci/example-web']) {
+  for (const pkg of ['@locci/example-ai-api', '@locci/example-ai-cli', '@locci/example-ai-web']) {
     await check(`typecheck ${pkg}`, async () => {
       execFileSync('pnpm', ['--filter', pkg, 'run', '-s', 'typecheck'], { cwd: root, stdio: 'pipe' });
       return 'clean';
     });
   }
   await check('web build', async () => {
-    execFileSync('pnpm', ['--filter', '@locci/example-web', 'run', '-s', 'build'], { cwd: root, stdio: 'pipe' });
+    execFileSync('pnpm', ['--filter', '@locci/example-ai-web', 'run', '-s', 'build'], { cwd: root, stdio: 'pipe' });
     return 'static build written';
   });
 }
@@ -148,7 +148,7 @@ await check('web protocol: /api/chat UI stream + CORS', async () => {
 await check('cli ask --json', async () => {
   let out;
   try {
-    out = execFileSync('pnpm', ['--filter', '@locci/example-cli', 'run', '-s', 'ask', '--json', 'Reply with exactly: pong'], {
+    out = execFileSync('pnpm', ['--filter', '@locci/example-ai-cli', 'run', '-s', 'ask', '--json', 'Reply with exactly: pong'], {
       cwd: root,
       encoding: 'utf8',
       env: { ...process.env, API_URL: API },

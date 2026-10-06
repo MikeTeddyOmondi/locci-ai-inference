@@ -4,9 +4,9 @@ Real client apps, ported onto `@locci/ai-sdk`, to catch regressions in the SDK a
 
 | Folder | Package | Ported from | What it is |
 | --- | --- | --- | --- |
-| [`api/`](api) | `@locci/example-api` | `locci-chat-cli/src/server.ts` + `autonomous-chatbot/src/routes/api/chat/+server.ts` | The one service that calls models: Express, `@locci/ai-sdk`, tools, optional MCP and a libSQL thread store |
-| [`cli/`](cli) | `@locci/example-cli` | `locci-chat-cli` (`cli.ts`, `tui.tsx`) | Terminal clients: `status`, `chat`, `ask`, `mcp list`, and the OpenTUI TUI |
-| [`web/`](web) | `@locci/example-web` | `autonomous-chatbot` (SvelteKit) | Browser client: threads in IndexedDB, chat streamed from the API |
+| [`api/`](api) | `@locci/example-ai-api` | `locci-chat-cli/src/server.ts` + `autonomous-chatbot/src/routes/api/chat/+server.ts` | The one service that calls models: Express, `@locci/ai-sdk`, tools, optional MCP and a libSQL thread store |
+| [`cli/`](cli) | `@locci/example-ai-cli` | `locci-chat-cli` (`cli.ts`, `tui.tsx`) | Terminal clients: `status`, `chat`, `ask`, `mcp list`, and the OpenTUI TUI |
+| [`web/`](web) | `@locci/example-ai-web` | `autonomous-chatbot` (SvelteKit) | Browser client: threads in IndexedDB, chat streamed from the API |
 
 ```text
 cli (status/chat/ask/mcp/tui) ──▶ POST /chat?events=1, GET /info /status /mcp ─┐

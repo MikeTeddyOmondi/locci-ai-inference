@@ -1,5 +1,5 @@
 {
-  "name": "@locci/example-cli",
+  "name": "@locci/example-ai-cli",
   "version": "0.1.0",
   "private": true,
   "description": "locci-chat-cli ported as a pure client of the example API (examples/api)",

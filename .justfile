@@ -224,11 +224,11 @@ examples-env *flags:
 
 # Run the example API on :3939 (needs `just up` and `just auth`)
 examples-api: sdk-build
-    pnpm --filter @locci/example-api run dev
+    pnpm --filter @locci/example-ai-api run dev
 
 # Run the CLI client, e.g. `just examples-cli status`, `chat`, `ask "hi"`, `mcp list`
 examples-cli *args:
-    pnpm --filter @locci/example-cli exec tsx src/cli.ts {{args}}
+    pnpm --filter @locci/example-ai-cli exec tsx src/cli.ts {{args}}
 
 # Run the OpenTUI terminal chat (needs Bun)
 examples-tui:
@@ -236,7 +236,7 @@ examples-tui:
 
 # Run the web client on :5173 (Vite dev server)
 examples-web:
-    pnpm --filter @locci/example-web run dev
+    pnpm --filter @locci/example-ai-web run dev
 
 # Regression checks against the running API: typecheck, web build, CLI and web protocols
 examples-check *flags: sdk-build

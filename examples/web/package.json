@@ -1,5 +1,5 @@
 {
-	"name": "@locci/example-web",
+	"name": "@locci/example-ai-web",
 	"private": true,
 	"version": "0.1.0",
 	"description": "autonomous-chatbot ported as a pure client of the example API (examples/api)",
