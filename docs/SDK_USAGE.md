@@ -373,7 +373,7 @@ console.log(LOCCI_CHAT_MODELS, LOCCI_EMBEDDING_MODELS, pick);
 | `baidu-ocr-vision` | document OCR (image in, text out) | PaddleOCR-VL 1.6; vision pool off by default |
 | `embedding-nomic` | embeddings | nomic-embed-text v1.5, 768 dimensions |
 
-Which models and why: [SLMS.md](SLMS.md).
+Which models and why: [SLMS.md](SLMS.md). Which id to use for which call (and what a wrong one returns): [README](../README.md#which-model-for-what).
 
 ## Not supported yet
 

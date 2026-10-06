@@ -51,6 +51,8 @@ The tenant comes only from the token. An `X-Locci-Tenant` header sent by a clien
 
 Anything else is `404`; a wrong method is `405`.
 
+Which id to use for which call (and what a wrong one returns): [README](../README.md#which-model-for-what).
+
 ### Health
 
 ```bash

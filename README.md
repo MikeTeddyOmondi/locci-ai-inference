@@ -90,6 +90,23 @@ All on llama.cpp `server-b11434` (pinned), CPU only in the local Colima VM (4 vC
 | `baidu-ocr-vision` | vision (`--profile vision`) | PaddleOCR-VL 1.6 + mmproj | Exact text and table recognition on the fixtures; 2 to 3 min per new image on CPU |
 | `embedding-nomic` | embed (`--profile embed`) | nomic-embed-text v1.5 Q4_K_M | 768 dims; inputs over 512 tokens fail until `-ub` is raised |
 
+### Which model for what
+
+| Model id | Call it with | `just chat` | Wrong use gives |
+| --- | --- | --- | --- |
+| `qwen-coder-7b` | `/v1/chat/completions`; SDK `streamText` / `generateText`, tools | Yes | |
+| `qwen-coder-14b` | Same; same model as `qwen-coder-7b`. `just chat`'s default | Yes | |
+| `baidu-ocr-vision` | `/v1/chat/completions` with an image plus a task prompt (`OCR:`, `Table Recognition:`, ...); SDK `generateText` with a `file` part | No | Junk text for a text-only prompt (measured: `貨貨`) |
+| `embedding-nomic` | `/v1/embeddings`; SDK `embed` / `embedMany` | No | An empty chat stream with no `finish_reason` |
+
+```bash
+just chat "Solve two sum in JavaScript"                    # qwen-coder-14b, max_tokens 1024
+just chat "Solve two sum in JavaScript" qwen-coder-7b 2048 # model, then max_tokens
+just list-models                                           # ids the gateway routes
+```
+
+`just list-models` lists every id even when its pool is stopped (that request gets a `502`). `just up` starts only the coder pool; `just up-all` adds vision and embed. Examples per endpoint: [docs/API_USAGE.md](docs/API_USAGE.md) (curl) and [docs/SDK_USAGE.md](docs/SDK_USAGE.md).
+
 The ids predate the model choice (`qwen-coder-*` run Qwen3-1.7B). Swap files with `.env` (see `.env.example`), or try one without editing: `CODER_MODEL=<file>.gguf docker compose up -d llama-coder-1 llama-coder-2`. Why these models, what was tried, and candidates (Qwen 3.5, Gemma 4, LFM2.5, Unlimited-OCR, Qwen3-Embedding): [docs/SLMS.md](docs/SLMS.md). Flags, context per request (2048 tokens on the coder nodes) and performance: [docs/LLAMA_SERVER.md](docs/LLAMA_SERVER.md).
 
 ## Git hooks
