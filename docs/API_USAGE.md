@@ -7,7 +7,7 @@ For the TypeScript client, see [SDK_USAGE.md](SDK_USAGE.md).
 ## Setup
 
 ```bash
-export LOCCI=http://localhost:8080        # KrakenD, the only public entry point
+export LOCCI_AI_GATEWAY=http://localhost:8080        # KrakenD, the only public entry point
 export LOCCI_AUTH=http://localhost:8787   # locci-auth (https://auth.locci.cloud in production)
 ```
 
@@ -54,7 +54,7 @@ Anything else is `404`; a wrong method is `405`.
 ### Health
 
 ```bash
-curl -s "$LOCCI/health"
+curl -s "$LOCCI_AI_GATEWAY/health"
 ```
 
 ```json
@@ -64,7 +64,7 @@ curl -s "$LOCCI/health"
 ### List models
 
 ```bash
-curl -s "$LOCCI/v1/models" -H "Authorization: Bearer $TOKEN"
+curl -s "$LOCCI_AI_GATEWAY/v1/models" -H "Authorization: Bearer $TOKEN"
 ```
 
 ```json
@@ -84,7 +84,7 @@ A model is listed even when its pool is not running (see `502` below). Locally o
 ### Chat completion
 
 ```bash
-curl -s "$LOCCI/v1/chat/completions" \
+curl -s "$LOCCI_AI_GATEWAY/v1/chat/completions" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{
     "model": "qwen-coder-7b",
@@ -115,7 +115,7 @@ Request fields are passed through to llama-server, so the usual OpenAI parameter
 Add `"stream": true` and keep the connection open with `-N`:
 
 ```bash
-curl -sN "$LOCCI/v1/chat/completions" \
+curl -sN "$LOCCI_AI_GATEWAY/v1/chat/completions" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{
     "model": "qwen-coder-7b",
@@ -139,7 +139,7 @@ data: [DONE]
 Print just the text:
 
 ```bash
-curl -sN "$LOCCI/v1/chat/completions" \
+curl -sN "$LOCCI_AI_GATEWAY/v1/chat/completions" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"model":"qwen-coder-7b","stream":true,"max_tokens":64,"messages":[{"role":"user","content":"Name three Go keywords."}]}' \
   | sed -n 's/^data: //p' | grep -v '^\[DONE\]' \
@@ -155,7 +155,7 @@ print()'
 Needs the embeddings pool (`docker compose --profile embed up -d`, after `just models --embed`).
 
 ```bash
-curl -s "$LOCCI/v1/embeddings" \
+curl -s "$LOCCI_AI_GATEWAY/v1/embeddings" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{ "model": "embedding-nomic", "input": ["hello world", "second"] }'
 ```
@@ -189,7 +189,7 @@ curl -s "$LOCCI/v1/embeddings" \
 The `401` and `429` bodies are empty: KrakenD Community Edition rejects at the edge with a bare status and cannot be configured to send a body (custom error bodies are an Enterprise feature), and nothing sits in front of KrakenD by design, to keep latency down. The `404`/`405` routing errors are KrakenD's plain text for the same reason. Branch on the status code; the `400` and `502` errors carry the OpenAI error shape.
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' "$LOCCI/v1/chat/completions" \
+curl -s -o /dev/null -w '%{http_code}\n' "$LOCCI_AI_GATEWAY/v1/chat/completions" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"model":"gpt-9","messages":[]}'
 # 400
