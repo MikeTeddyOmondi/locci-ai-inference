@@ -70,21 +70,33 @@ smoke:
     scripts/smoke.sh {{edge}}
 
 # Stream one chat completion through the edge, e.g. `just chat "Reverse a string in Go"`.
-chat prompt="Write a Go function to reverse a string." model="qwen-coder-7b":
+# max_tokens caps the answer; a cut-off answer is flagged, not silent. Prompt
+# plus answer must fit the 2048-token per-request window (docs/LLAMA_SERVER.md).
+chat prompt="Write a Go function to reverse a string." model="qwen-coder-14b" max_tokens="1024":
     #!/usr/bin/env sh
     set -eu
     TOKEN=$(scripts/locci-auth-token.sh)
-    BODY=$(python3 -c 'import json,sys; print(json.dumps({"model":sys.argv[1],"stream":True,"max_tokens":256,"messages":[{"role":"user","content":sys.argv[2]}]}))' '{{model}}' '{{prompt}}')
+    BODY=$(python3 -c 'import json,sys; print(json.dumps({"model":sys.argv[1],"stream":True,"max_tokens":int(sys.argv[3]),"messages":[{"role":"user","content":sys.argv[2]}]}))' '{{model}}' '{{prompt}}' '{{max_tokens}}')
     curl -sN {{edge}}/v1/chat/completions \
       -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$BODY" \
       | python3 -u -c 'import json,sys
+    finish, usage = None, None
     for line in sys.stdin:
         line = line.strip()
         if not line.startswith("data:") or line.endswith("[DONE]"):
             continue
-        for choice in json.loads(line[5:]).get("choices", []):
+        chunk = json.loads(line[5:])
+        usage = chunk.get("usage") or usage
+        for choice in chunk.get("choices", []):
             print(choice.get("delta", {}).get("content") or "", end="", flush=True)
-    print()'
+            finish = choice.get("finish_reason") or finish
+    print()
+    if finish == "length":
+        print("\n[cut off: hit max_tokens=%s; rerun with a larger max_tokens]" % sys.argv[1], file=sys.stderr)
+    elif finish != "stop":
+        print("\n[stream ended without finish_reason=stop (got %r)]" % finish, file=sys.stderr)
+    if usage:
+        print("[tokens: prompt=%d completion=%d]" % (usage["prompt_tokens"], usage["completion_tokens"]), file=sys.stderr)' '{{max_tokens}}'
 
 # List the models the router knows about.
 list-models:
@@ -191,3 +203,7 @@ tools-sdk:
     export TOKEN="$(scripts/locci-auth-token.sh)"
     export LOCCI_AI_BASE_URL={{edge}}/v1
     cd {{sdk}} && node --import tsx scripts/tool-calls.ts
+
+# Document OCR through the edge with the committed fixtures (needs the vision pool)
+ocr-api:
+    scripts/ocr-api.sh {{edge}}

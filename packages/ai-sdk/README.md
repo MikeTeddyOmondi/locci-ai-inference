@@ -68,7 +68,7 @@ On the client use `useChat` from `@ai-sdk/react` or `Chat` from `@ai-sdk/svelte`
 
 ## Not supported yet
 
-Tool calling works through this provider (`just tools-sdk` checks it), but only with a model trained to emit tool calls; the current local coder stand-in is not. See [docs/LLAMA_SERVER.md](../../docs/LLAMA_SERVER.md#tool-calling). `generateObject` is untested.
+`generateObject` is untested. Tool calling (`just tools-sdk`) and images to `baidu-ocr-vision` work; examples in [docs/SDK_USAGE.md](../../docs/SDK_USAGE.md).
 
 ## Development
 

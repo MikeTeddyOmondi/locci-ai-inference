@@ -4,7 +4,7 @@
 
 For raw HTTP, see [API_USAGE.md](API_USAGE.md).
 
-**How this was verified.** Each snippet below was copied into a fresh project that installs the package from its folder. They were typechecked together, and every server-side one was run against the local stack (`just up`, `just auth`, embeddings pool on). The two browser components (React, Svelte) were typechecked only.
+**How this was verified.** Each snippet below was copied into a fresh project that installs the package from its folder. They were typechecked together, and every server-side one was run against the local stack (`just up`, `just auth`, embeddings and vision pools on). The two browser components (React, Svelte) were typechecked only.
 
 ## Install
 
@@ -116,6 +116,64 @@ console.log("dimensions:", query.length);
 console.log("go question:", cosineSimilarity(query, embeddings[0]).toFixed(3));
 console.log("banana bread:", cosineSimilarity(query, embeddings[1]).toFixed(3));
 ```
+
+## Tool calling
+
+The coder models (Qwen3-1.7B locally) call tools through the standard AI SDK API. `just tools-sdk` checks this end to end.
+
+```ts
+// file: tools.ts
+import { generateText, stepCountIs, tool } from "ai";
+import { z } from "zod";
+import { locci } from "@locci/ai-sdk";
+
+const { text, steps } = await generateText({
+  model: locci("qwen-coder-7b"),
+  tools: {
+    getWeather: tool({
+      description: "Get the current weather for a city",
+      inputSchema: z.object({ city: z.string() }),
+      execute: async ({ city }) => ({ city, tempC: 24, sky: "sunny" }),
+    }),
+  },
+  stopWhen: stepCountIs(3), // call the tool, then answer with its result
+  temperature: 0,
+  prompt: "What is the weather in Nairobi right now?",
+});
+
+console.log(steps.flatMap((s) => s.toolCalls).map((c) => `${c.toolName}(${JSON.stringify(c.input)})`));
+console.log(text);
+```
+
+Use `temperature: 0` when the call must happen reliably; at higher temperatures a 1.7B model occasionally opens with text instead of the call.
+
+## Document OCR
+
+`baidu-ocr-vision` (PaddleOCR-VL) takes an image plus a task prompt: `OCR:`, `Table Recognition:`, `Formula Recognition:`, `Chart Recognition:` or `Seal Recognition:`. Needs the vision pool running.
+
+```ts
+// file: ocr.ts
+import { readFile } from "node:fs/promises";
+import { generateText } from "ai";
+import { locci } from "@locci/ai-sdk";
+
+const { text } = await generateText({
+  model: locci("baidu-ocr-vision"),
+  temperature: 0,
+  maxOutputTokens: 512,
+  messages: [{
+    role: "user",
+    content: [
+      { type: "file", data: await readFile(process.env.IMAGE ?? "ocr-text.png"), mediaType: "image/png" },
+      { type: "text", text: "OCR:" },
+    ],
+  }],
+});
+
+console.log(text);
+```
+
+Images go in a `file` part with an image `mediaType` (AI SDK 7 deprecates the older `image` part). Tables come back as OTSL tokens (`<fcel>` cell, `<nl>` row end), not HTML. On the local CPU stack a new image takes two to three minutes, while the same image again returns in seconds because the node reuses its prompt cache; the SDK's fetch has no timeout of its own, but put long timeouts on anything in front of it (for example a serverless function limit).
 
 ## Choosing credentials
 
@@ -309,15 +367,15 @@ const pick: LocciChatModelId = "qwen-coder-7b"; // autocompletes; other strings 
 console.log(LOCCI_CHAT_MODELS, LOCCI_EMBEDDING_MODELS, pick);
 ```
 
-| Id | Kind | Local stand-in |
+| Id | Kind | Running locally |
 | --- | --- | --- |
-| `qwen-coder-7b`, `qwen-coder-14b` | chat | Qwen2.5-Coder 1.5B (both ids) |
-| `baidu-ocr-vision` | chat (vision) | LLaVA 1.5 7B; pool off by default |
+| `qwen-coder-7b`, `qwen-coder-14b` | chat, code, tools | Qwen3-1.7B (both ids; the names predate the model choice) |
+| `baidu-ocr-vision` | document OCR (image in, text out) | PaddleOCR-VL 1.6; vision pool off by default |
 | `embedding-nomic` | embeddings | nomic-embed-text v1.5, 768 dimensions |
+
+Which models and why: [SLMS.md](SLMS.md).
 
 ## Not supported yet
 
-- **Tools with the current coder model.** The SDK side works (`tool()`, `toolChoice`, streaming tool calls), but the local stand-in, Qwen2.5-Coder-1.5B, does not emit tool calls in a parseable format. A model trained for it passes `just tools-sdk`; see [LLAMA_SERVER.md](LLAMA_SERVER.md#tool-calling) and [SLMS.md](SLMS.md).
 - **`generateObject`.** Untested.
-- **Images to the vision model.** Routed, but the vision pool is off by default and untested through the SDK.
 - **Browser-direct calls.** The edge has no CORS config; go through your server as above.

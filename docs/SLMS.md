@@ -6,18 +6,29 @@ How to run any of these is in [LLAMA_SERVER.md](LLAMA_SERVER.md).
 
 ## What we serve now
 
-The gateway's model ids name the target models; locally each pool runs a smaller stand-in so the stack fits in the Colima VM (4 vCPU, 7.7 GiB, CPU only).
+The gateway's model ids are placeholders that predate the model choice: `qwen-coder-7b` and `qwen-coder-14b` both run Qwen3-1.7B locally. Everything runs in the Colima VM (4 vCPU, 7.7 GiB, CPU only), on llama.cpp `server-b11434` (pinned).
 
-| Gateway id | Pool | Running locally | Status |
+| Gateway id | Pool | Running | Status (measured on this stack) |
 | --- | --- | --- | --- |
-| `qwen-coder-7b` | coder | Qwen2.5-Coder-1.5B-Instruct Q4_K_M (1.0 GB) | Chat and code: works, ~56 tokens/s. **Tool calling: fails** (measured; see below). |
-| `qwen-coder-14b` | coder | same file as above | Alias of the same stand-in. |
-| `baidu-ocr-vision` | vision | LLaVA v1.5 7B Q4_K + mmproj | Off by default, **untested**. A 2023 general vision model, not an OCR model. |
-| `embedding-nomic` | embed | nomic-embed-text v1.5 Q4_K_M (80 MB) | Works, 768 dims (measured). Inputs over 512 tokens fail until `-ub` is raised. |
+| `qwen-coder-7b`, `qwen-coder-14b` | coder | **Qwen3-1.7B** Q4_K_M (1.28 GB, ggml-org), `--reasoning off` | Chat and code ~50 tokens/s generation, ~190 tokens/s prompt. **Tool calling passes** every `just tools-api` / `just tools-sdk` check, 3 runs in a row. ~2.1 GiB resident per node. |
+| `baidu-ocr-vision` | vision | **PaddleOCR-VL 1.6** (0.94 GB) + mmproj (0.88 GB), `--temp 0` | `just ocr-api` passes: exact text from an invoice image, and a 3x3 table. **Slow on CPU**: 110 to 180 s per image (see below). ~1.5 GiB resident. |
+| `embedding-nomic` | embed | nomic-embed-text v1.5 Q4_K_M (80 MB) | 768 dims. Inputs over 512 tokens fail until `-ub` is raised. |
 
-**Measured tool-calling result for Qwen2.5-Coder-1.5B:** given a `get_weather` tool, it writes the call as a markdown JSON block (or `{{"name": ...}}`, copying literal braces from its template) instead of `<tool_call>` tags, so llama-server parses no call. Even `tool_choice: "required"` does not save it on this llama.cpp build. The serving stack is fine; the model is not trained well enough on the format at this size. Qwen2.5 is also two generations old now.
+### Qwen3-1.7B (coder pool), measured
 
-**Control test (measured):** the same llama.cpp build with a same-size *general* model, Qwen2.5-1.5B-Instruct Q4_K_M, put in the coder pool via `CODER_MODEL`, passed every check of `just tools-api` and `just tools-sdk` three runs in a row: forced calls parsed into `tool_calls`, results round-tripped into a text answer, and streamed calls reassembled from deltas. With `tool_choice: "auto"` it was inconsistent about calling (sometimes asked a question instead) and did not invent a call for an unrelated prompt. So the coder fine-tune is the problem, and even a 1.5B general model handles the protocol.
+- **Tool calling:** forced calls (`tool_choice: "required"`) are parsed into `tool_calls`, tool results round-trip into a text answer, and streamed calls reassemble from deltas, through curl and through the AI SDK. With `"auto"` it called the tool when the question needed it (3 of 3) and answered in plain text for an unrelated prompt with tools present (3 of 3).
+- **Thinking:** off via `--reasoning off`; no `<think>` text or `reasoning_content` in responses. Set `CODER_REASONING=on` in `.env` to enable it (answers get slower and longer; tool calls may then appear in `reasoning_content`).
+- **Memory:** ~2.1 GiB per node with `-c 8192 --parallel 4`, against ~1.25 GiB for the previous model; Qwen3 has a larger KV cache per token.
+
+### PaddleOCR-VL 1.6 (vision pool), measured
+
+- **Prompts:** send the image plus a task prompt: `OCR:`, `Table Recognition:`, `Formula Recognition:`, `Chart Recognition:` or `Seal Recognition:`. (`Spotting:` also exists but needs the mmproj's `clip.vision.image_max_pixels` raised; not set up here.)
+- **Output:** `OCR:` returns plain text with line breaks. **`Table Recognition:` returns OTSL tokens, not HTML or Markdown**: `<fcel>` starts a cell, `<nl>` ends a row, e.g. `<fcel>Model<fcel>Pool<nl><fcel>Qwen3-1.7B<fcel>coder<nl>`. Clients convert it (empty cells and spans use further OTSL tokens such as `<ecel>`, `<lcel>`, `<ucel>`).
+- **Speed:** generation is fine (13 to 14 tokens/s), but encoding the image is CPU-bound at ~2.8 tokens/s of prompt: 175 s for a 900x420 invoice (493 prompt tokens) and 109 s for a small table (313). Expect minutes per page on this VM. A GPU, more cores, or a quantized mmproj (only F16 is published officially) are the levers. Callers need generous timeouts; the gateway's are 600 s.
+
+### Previous coder model: Qwen2.5-Coder-1.5B (retired)
+
+It could not call tools: given a `get_weather` tool it wrote the call as a markdown JSON block (or `{{"name": ...}}`, copying literal braces from its own template) instead of `<tool_call>` tags, so llama-server parsed nothing, and `tool_choice: "required"` did not force it on this build. A same-size general model, Qwen2.5-1.5B-Instruct, passed the same checks, which isolated the coder fine-tune as the problem. Details in [LLAMA_SERVER.md](LLAMA_SERVER.md#tool-calling).
 
 ## Candidates
 
@@ -27,8 +38,8 @@ Sizes are approximate Q4_K_M files. "Fits" is for this 7.7 GiB VM with the other
 
 | Model | Size | Why consider it | Fits locally |
 | --- | --- | --- | --- |
-| **Qwen3-1.7B** | ~1.1 GB | Top sub-2B score (0.960) on a published local tool-calling benchmark, the only one there to get every hard prompt right. Hermes `<tool_call>` format, which llama.cpp parses. Thinking model: run with `--reasoning off`. | Yes, two nodes |
-| Qwen2.5-1.5B-Instruct | ~1.1 GB | Measured here: passes the tool-calling protocol checks. Older generation and weak at deciding *when* to call; a safe baseline, not a target. | Yes, two nodes |
+| **Qwen3-1.7B** (in use) | 1.28 GB | Top sub-2B score (0.960) on a published local tool-calling benchmark. Hermes `<tool_call>` format, which llama.cpp parses. **Running now; passes our checks.** | Yes, two nodes |
+| Qwen2.5-1.5B-Instruct | ~1.1 GB | Measured here: passes the protocol checks but is weak at deciding *when* to call. A baseline, superseded by Qwen3-1.7B. | Yes, two nodes |
 | **LFM2.5-1.2B** (Liquid AI) | ~0.8 GB | Second on the same benchmark (0.920); built for edge and CPU. | Yes, two nodes |
 | **Qwen 3.5 2B / 4B** | ~2 / ~3 GB | Newest Qwen below 27B (Feb to Mar 2026), 262K context, Apache 2.0. 4B is the laptop-class step up. | 2B yes; 4B one node |
 | **Gemma 4 E2B / E4B** | ~1.5 / ~3 GB | Native function calling, 128K context, multimodal (image, audio). Thinking on by default: tool calls land in `reasoning_content` unless disabled. | E2B yes; E4B one node |
@@ -38,16 +49,36 @@ Sizes are approximate Q4_K_M files. "Fits" is for this 7.7 GiB VM with the other
 
 Qwen 3.6 and 3.8 start at 27B and Gemma 4's next size is 12B: GPU territory, not SLMs for this box.
 
-**Suggested next step:** put Qwen3-1.7B (or Qwen 3.5 2B) in the coder pool, run with `--reasoning off`, and rerun `just tools-api` / `just tools-sdk`. Both fit two nodes in the current VM.
+**Next to try:** Qwen 3.5 2B (newer, longer context) against Qwen3-1.7B with the same checks. Memory is the constraint: two Qwen3-1.7B nodes already take ~4.2 GiB.
 
 ### Document OCR and vision (`vision` pool)
 
 | Model | Size | Why consider it |
 | --- | --- | --- |
-| **PaddleOCR-VL 1.6** (Baidu) | ~0.9 GB | The model the `baidu-ocr-vision` id describes. 0.9B document OCR: text in 109 languages, tables, formulas to LaTeX, charts, seals. Reports 96.33% on OmniDocBench v1.6 (v1.5 scored 94.5%, above Qwen2.5-VL-72B at 87.0%). In llama.cpp since b8110 (Feb 2026); our b11434 is newer. |
+| **PaddleOCR-VL 1.6** (Baidu, in use) | 0.94 GB + 0.88 GB mmproj | **Running now** (see above). The model the `baidu-ocr-vision` id describes. 0.9B document OCR: text in 109 languages, tables, formulas to LaTeX, charts, seals. Reports 96.33% on OmniDocBench v1.6 (v1.5 scored 94.5%, above Qwen2.5-VL-72B at 87.0%). In llama.cpp since b8110 (Feb 2026); our b11434 is newer. |
+| **Unlimited-OCR** (Baidu) | ~1.95 GB Q4_K_M + ~0.83 GB mmproj | Whole-document parsing in one pass, including multi-page PDFs. See below. |
 | Gemma 4 E2B / E4B | ~1.5 / ~3 GB | General image understanding plus chat, if the pool should do more than OCR. |
 
-PaddleOCR-VL replacing LLaVA 1.5 is the clearest upgrade in this list: smaller, purpose-built, and matching the id we already expose.
+PaddleOCR-VL replaced LLaVA 1.5 (a 2023 general vision model, never tested here) in the vision pool.
+
+#### Unlimited-OCR (Baidu)
+
+[GitHub](https://github.com/baidu/Unlimited-OCR) · [Hugging Face](https://huggingface.co/baidu/Unlimited-OCR) · [paper (arXiv 2606.23050)](https://arxiv.org/abs/2606.23050) · MIT license · released 2026-06-22
+
+Baidu's long-document parser, positioned as taking DeepSeek-OCR "one step further". Where PaddleOCR-VL recognises one element at a time from a task prompt (`OCR:`, `Table Recognition:`, ...), Unlimited-OCR parses a whole page, or a sequence of pages, into structured output in a single generation ("one-shot long-horizon parsing").
+
+| | |
+| --- | --- |
+| Architecture | DeepSeek-OCR v1's DeepEncoder (vision) + a DeepSeek-V2 MoE decoder whose attention is replaced by R-SWA (Reference Sliding Window Attention). llama.cpp architecture name: `deepseek2-ocr`. |
+| Size | 3.34B parameters; 6.8 GB in BF16. Community GGUFs: ~1.95 GB at Q4_K_M plus a ~0.83 GB F16 mmproj. |
+| Prompts | `<image>document parsing.` for a page; `<image>Multi page parsing.` for several pages (PDFs are converted to page images first, at 300 DPI in the reference code). |
+| Reference runtimes | `transformers` with `trust_remote_code` on NVIDIA GPUs (bf16, `max_length=32768`); vLLM (`vllm/vllm-openai:unlimited-ocr` images, [recipe](https://recipes.vllm.ai/baidu/Unlimited-OCR)); also on Baidu Cloud and ModelScope. |
+| llama.cpp | Supported in mainline since PR [#24969](https://github.com/ggml-org/llama.cpp/pull/24969) (merged around 2026-07-01), so our b11434 should load it. That support runs the decoder with **full attention**; R-SWA is in PR [#24975](https://github.com/ggml-org/llama.cpp/pull/24975), still open as of the GGUF publishers' notes, so long multi-page inputs cost more memory than in the reference implementation. The tile-limit fix [#25614](https://github.com/ggml-org/llama.cpp/pull/25614) is merged. |
+| GGUFs | No official one. Community: [sabafallah/Unlimited-OCR-GGUF](https://huggingface.co/sabafallah/Unlimited-OCR-GGUF) (documents the PR status, mmproj re-uploaded 2026-07-13 with `preproc_max_tiles = 32`), [vimalnakrani/unlimited-ocr-gguf](https://huggingface.co/vimalnakrani/unlimited-ocr-gguf), [sahilchachra/Unlimited-OCR-GGUF](https://huggingface.co/sahilchachra/Unlimited-OCR-GGUF) (an older upload that needed an unmerged PR build). |
+
+**Caveats before adopting it here.** One GGUF publisher verified image inference only with `llama-mtmd-cli` and reports that `llama-server`'s multimodal endpoint did not accept the model's image prompt in their build; that must be tested on our build before it can sit behind the gateway. At ~2.8 GB resident plus full-attention KV for long documents, it does not fit beside two coder nodes and PaddleOCR-VL in the current 7.7 GiB VM; it would replace PaddleOCR-VL locally or run on a bigger box.
+
+**Where it fits.** PaddleOCR-VL for fast, small, per-element recognition (a field, a table, a formula); Unlimited-OCR for turning whole documents or PDFs into structured text in one call. If both are offered they deserve separate ids (for example `baidu-ocr-vision` and `baidu-unlimited-ocr`), since prompts and output shape differ.
 
 ### Embeddings (`embed` pool)
 
@@ -67,7 +98,7 @@ Changing the embedding model changes the vector space (and possibly the dimensio
 3. If the id should change, edit `ModelRegistry` in `locci-ai-gateway/main.go` **and** `packages/ai-sdk/src/models.ts`; `just sdk-test` fails if they disagree.
 4. `just up`, then `just smoke`, `just tools-api`, `just tools-sdk` and `just sdk-e2e`.
 
-The ids are stand-ins today (`qwen-coder-7b` runs a 1.5B model). When the real models are chosen, ids that name the capability (`locci-coder`, `locci-ocr`) would let the model behind them change without breaking clients.
+The ids are placeholders today (`qwen-coder-7b` runs Qwen3-1.7B). When the real models are chosen, ids that name the capability (`locci-coder`, `locci-ocr`) would let the model behind them change without breaking clients.
 
 ## Sources
 

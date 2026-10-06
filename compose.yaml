@@ -4,7 +4,9 @@
 # NVIDIA Container Toolkit; not available on Docker Desktop for Mac).
 
 x-llama: &llama
-  image: ghcr.io/ggml-org/llama.cpp:server
+  # Pinned: the floating :server tag can change server defaults (e.g. --jinja)
+  # and tool-call parsing under us. See docs/LLAMA_SERVER.md before bumping.
+  image: ghcr.io/ggml-org/llama.cpp:server-b11434
   volumes:
     - ./models:/models:ro
   networks:
@@ -77,19 +79,25 @@ services:
       - locci-network
 
   # 4. Inference: Coder Pool (2 nodes, continuous batching enabled)
+  # Qwen3 is a thinking model; --reasoning off keeps answers and tool calls in
+  # `content` / `tool_calls` instead of `reasoning_content`. --jinja is the
+  # default on this build, set explicitly because tool calling depends on it.
   llama-coder-1:
     <<: *llama
-    command: ["-m", "/models/${CODER_MODEL:-qwen2.5-coder-1.5b-instruct-q4_k_m.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--cont-batching", "--parallel", "${LLAMA_PARALLEL:-4}"]
+    command: ["-m", "/models/${CODER_MODEL:-Qwen3-1.7B-Q4_K_M.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--cont-batching", "--parallel", "${LLAMA_PARALLEL:-4}", "--jinja", "--reasoning", "${CODER_REASONING:-off}"]
 
   llama-coder-2:
     <<: *llama
-    command: ["-m", "/models/${CODER_MODEL:-qwen2.5-coder-1.5b-instruct-q4_k_m.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--cont-batching", "--parallel", "${LLAMA_PARALLEL:-4}"]
+    command: ["-m", "/models/${CODER_MODEL:-Qwen3-1.7B-Q4_K_M.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--cont-batching", "--parallel", "${LLAMA_PARALLEL:-4}", "--jinja", "--reasoning", "${CODER_REASONING:-off}"]
 
   # 5. Inference: Vision/OCR Pool (opt-in)
+  # PaddleOCR-VL 1.6: send an image plus a task prompt (`OCR:`, `Table
+  # Recognition:`, `Formula Recognition:`, `Chart Recognition:`, `Seal
+  # Recognition:`). Greedy decoding per the model card.
   llama-vision-1:
     <<: *llama
     profiles: ["vision"]
-    command: ["-m", "/models/${VISION_MODEL:-llava-v1.5-7b-q4_k.gguf}", "--mmproj", "/models/${VISION_MMPROJ:-llava-v1.5-7b-mmproj-f16.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "4096"]
+    command: ["-m", "/models/${VISION_MODEL:-PaddleOCR-VL-1.6.gguf}", "--mmproj", "/models/${VISION_MMPROJ:-PaddleOCR-VL-1.6-mmproj.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--parallel", "2", "--temp", "0"]
 
   # 6. Inference: Embeddings Pool (opt-in)
   llama-embed-1:

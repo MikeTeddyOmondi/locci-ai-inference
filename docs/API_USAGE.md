@@ -108,6 +108,8 @@ curl -s "$LOCCI_AI_GATEWAY/v1/chat/completions" \
 }
 ```
 
+**Check `finish_reason`.** `"stop"` means the model finished; `"length"` means it hit `max_tokens` and the answer is cut off mid-sentence, even though the stream ends normally with `[DONE]`. Raise `max_tokens` (prompt plus answer must fit the 2048-token per-request window, see [LLAMA_SERVER.md](LLAMA_SERVER.md#context-is-split-across-slots)). Requests without `max_tokens` generate until the window is full.
+
 Request fields are passed through to llama-server, so the usual OpenAI parameters work (`temperature`, `top_p`, `max_tokens`, `stop`, `seed`, `response_format`). `model` in the response is the id you requested; `timings` is llama.cpp's own performance block (trimmed above), not part of the OpenAI schema.
 
 ### Streaming
@@ -173,6 +175,39 @@ curl -s "$LOCCI_AI_GATEWAY/v1/embeddings" \
 ```
 
 `input` takes a string or an array of strings. Vectors are 768-dimensional.
+
+### Document OCR
+
+`baidu-ocr-vision` is PaddleOCR-VL 1.6 and needs the vision pool (`just models --vision`, then `docker compose --profile vision up -d`). Send the image as a base64 data URL plus a task prompt: `OCR:`, `Table Recognition:`, `Formula Recognition:`, `Chart Recognition:` or `Seal Recognition:`.
+
+```bash
+IMG=$(base64 < scripts/fixtures/ocr-text.png | tr -d '\n')
+curl -s --max-time 600 "$LOCCI_AI_GATEWAY/v1/chat/completions" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "model": "baidu-ocr-vision",
+    "temperature": 0,
+    "max_tokens": 512,
+    "messages": [{ "role": "user", "content": [
+      { "type": "image_url", "image_url": { "url": "data:image/png;base64,'"$IMG"'" } },
+      { "type": "text", "text": "OCR:" }
+    ]}]
+  }' | python3 -c 'import json,sys; print(json.load(sys.stdin)["choices"][0]["message"]["content"])'
+```
+
+```text
+LOCCI INVOICE 2026-0142
+
+Customer: Acme Ltd, Nairobi
+
+Service: GPU inference, 3 hours
+
+Total due: KES 12,450.00
+```
+
+`Table Recognition:` answers in OTSL tokens rather than HTML: `<fcel>` starts a cell and `<nl>` ends a row, so `scripts/fixtures/ocr-table.png` comes back as `<fcel>Model<fcel>Pool<fcel>Size<nl><fcel>Qwen3-1.7B<fcel>coder<fcel>1.3 GB<nl>...`.
+
+On the local CPU stack one image takes **two to three minutes** (encoding the image dominates), so set a long client timeout. `just ocr-api` runs both fixtures and checks the results.
 
 ## Errors
 
