@@ -6,7 +6,7 @@
     "lib": ["ES2022", "DOM"],
     "strict": true,
     "declaration": true,
-    "sourceMap": true,
+    "sourceMap": false,
     "outDir": "dist",
     "rootDir": ".",
     "skipLibCheck": true,
@@ -15,5 +15,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "scripts"]
 }

@@ -68,7 +68,7 @@ On the client use `useChat` from `@ai-sdk/react` or `Chat` from `@ai-sdk/svelte`
 
 ## Not supported yet
 
-Tool calling and `generateObject` need llama-server started with `--jinja`; the compose services do not pass it, so treat both as untested.
+Tool calling works through this provider (`just tools-sdk` checks it), but only with a model trained to emit tool calls; the current local coder stand-in is not. See [docs/LLAMA_SERVER.md](../../docs/LLAMA_SERVER.md#tool-calling). `generateObject` is untested.
 
 ## Development
 

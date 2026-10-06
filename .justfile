@@ -175,3 +175,19 @@ sdk-e2e:
     export LOCCI_TEST_ACCESS_TOKEN="$(scripts/locci-auth-token.sh)"
     export LOCCI_AUTH_URL=http://localhost:8787
     cd {{sdk}} && pnpm test:e2e
+
+# -- tool calling --------------------------------------------------------------
+# Protocol checks (well-formed tool_calls, results round-trip, streaming), not
+# model quality. MODEL picks the gateway model id. See docs/LLAMA_SERVER.md.
+
+# Tool calling over plain HTTP (curl) through the edge
+tools-api:
+    scripts/tool-calls-api.sh {{edge}}
+
+# Tool calling with the AI SDK and @locci/ai-sdk through the edge
+tools-sdk:
+    #!/usr/bin/env sh
+    set -eu
+    export TOKEN="$(scripts/locci-auth-token.sh)"
+    export LOCCI_AI_BASE_URL={{edge}}/v1
+    cd {{sdk}} && node --import tsx scripts/tool-calls.ts

@@ -317,6 +317,7 @@ console.log(LOCCI_CHAT_MODELS, LOCCI_EMBEDDING_MODELS, pick);
 
 ## Not supported yet
 
-- **Tools and `generateObject`.** Both need llama-server started with `--jinja`; the compose services do not pass it. Untested.
+- **Tools with the current coder model.** The SDK side works (`tool()`, `toolChoice`, streaming tool calls), but the local stand-in, Qwen2.5-Coder-1.5B, does not emit tool calls in a parseable format. A model trained for it passes `just tools-sdk`; see [LLAMA_SERVER.md](LLAMA_SERVER.md#tool-calling) and [SLMS.md](SLMS.md).
+- **`generateObject`.** Untested.
 - **Images to the vision model.** Routed, but the vision pool is off by default and untested through the SDK.
 - **Browser-direct calls.** The edge has no CORS config; go through your server as above.
