@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -164,5 +165,65 @@ func TestUpstreamDownIs502(t *testing.T) {
 	resp := post(t, gw.URL, "/v1/chat/completions", "acme", `{"model":"qwen-coder-7b"}`)
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("want 502, got %d", resp.StatusCode)
+	}
+}
+
+func TestModelRewrittenInEveryStreamChunk(t *testing.T) {
+	gw, sink := setup(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"model\":\"/models/qwen.gguf\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		// A chunk split mid-line must still be rewritten once it completes.
+		io.WriteString(w, "data: {\"model\":\"/models/qwen.gguf\",\"choices\":[],")
+		w.(http.Flusher).Flush()
+		io.WriteString(w, "\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":1,\"total_tokens\":3}}\n\ndata: [DONE]\n\n")
+	})
+
+	resp := post(t, gw.URL, "/v1/chat/completions", "acme", `{"model":"qwen-coder-7b","stream":true,"messages":[]}`)
+	got, _ := io.ReadAll(resp.Body)
+	body := string(got)
+	if strings.Contains(body, "/models/qwen.gguf") {
+		t.Fatalf("GGUF path leaked to the client:\n%s", body)
+	}
+	if strings.Count(body, `"model":"qwen-coder-7b"`) != 2 || !strings.Contains(body, "data: [DONE]\n\n") {
+		t.Fatalf("unexpected stream:\n%s", body)
+	}
+	select {
+	case e := <-sink:
+		if e.TotalTokens != 3 {
+			t.Fatalf("usage lost by the rewrite: %+v", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no meter event recorded")
+	}
+}
+
+func TestModelRewrittenInPlainBodyWithContentLength(t *testing.T) {
+	const upstreamBody = `{"model":"/models/qwen.gguf","choices":[],"usage":{"prompt_tokens":4,"total_tokens":4}}`
+	gw, _ := setup(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", strconv.Itoa(len(upstreamBody)))
+		io.WriteString(w, upstreamBody)
+	})
+
+	resp := post(t, gw.URL, "/v1/chat/completions", "acme", `{"model":"qwen-coder-7b","messages":[]}`)
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("body is not complete JSON (stale Content-Length?): %v", err)
+	}
+	if body["model"] != "qwen-coder-7b" {
+		t.Fatalf("model not rewritten: %v", body["model"])
+	}
+}
+
+func TestRewriteLineLeavesOtherLinesAlone(t *testing.T) {
+	w := &meteringWriter{model: "m"}
+	for _, line := range []string{"data: [DONE]\n", "\n", ": keep-alive\n", "data: {\"no_model\":1}\n", "not json\n"} {
+		if got := string(w.rewriteLine([]byte(line))); got != line {
+			t.Errorf("rewriteLine(%q) = %q, want unchanged", line, got)
+		}
+	}
+	if got := string(w.rewriteLine([]byte("{\"model\":\"x\"}\r\n"))); got != "{\"model\":\"m\"}\r\n" {
+		t.Errorf("line ending not preserved: %q", got)
 	}
 }

@@ -85,34 +85,83 @@ type usageEnvelope struct {
 	Usage *usage `json:"usage"`
 }
 
-// meteringWriter tees the upstream response to the client while scanning for
-// the OpenAI `usage` object. It handles both SSE streams ("data:" lines) and
-// plain JSON bodies, and retains only a partial-line tail in memory.
+// meteringWriter forwards the upstream response to the client line by line,
+// scanning each line for the OpenAI `usage` object and, when model is set,
+// replacing the response's `model` (llama-server reports its GGUF path) with
+// the id the client asked for. It handles both SSE streams ("data:" lines) and
+// plain JSON bodies, and retains only a partial-line tail in memory: SSE events
+// end in a newline, so streamed tokens are not held back.
 type meteringWriter struct {
 	gin.ResponseWriter
+	model     string
 	tail      bytes.Buffer
 	lastUsage *usage
 }
 
 func (w *meteringWriter) Write(p []byte) (int, error) {
-	w.scan(p)
-	return w.ResponseWriter.Write(p) // forward to the client unchanged
-}
-
-func (w *meteringWriter) scan(p []byte) {
 	w.tail.Write(p)
 	data := w.tail.Bytes()
+	var out bytes.Buffer
 	for {
 		i := bytes.IndexByte(data, '\n')
 		if i < 0 {
 			break
 		}
 		w.parseLine(data[:i])
+		out.Write(w.rewriteLine(data[:i+1]))
 		data = data[i+1:]
 	}
 	rest := append([]byte(nil), data...) // keep the trailing partial line
 	w.tail.Reset()
 	w.tail.Write(rest)
+
+	if out.Len() > 0 {
+		if _, err := w.ResponseWriter.Write(out.Bytes()); err != nil {
+			return 0, err
+		}
+	}
+	// The proxy expects the bytes it handed over to be accepted; a held-back
+	// partial line is written by the next Write or by finalize.
+	return len(p), nil
+}
+
+// rewriteLine replaces the top-level `model` of a JSON (or "data: " JSON) line
+// with w.model. Anything else, including "[DONE]" and non-JSON, is returned
+// unchanged.
+func (w *meteringWriter) rewriteLine(line []byte) []byte {
+	if w.model == "" {
+		return line
+	}
+	body := bytes.TrimRight(line, "\r\n")
+	ending := line[len(body):]
+
+	payload := bytes.TrimSpace(body)
+	isEvent := bytes.HasPrefix(payload, []byte("data:"))
+	payload = bytes.TrimSpace(bytes.TrimPrefix(payload, []byte("data:")))
+	if len(payload) == 0 || payload[0] != '{' {
+		return line
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return line
+	}
+	if _, ok := fields["model"]; !ok {
+		return line
+	}
+	fields["model"], _ = json.Marshal(w.model)
+	rewritten, err := json.Marshal(fields)
+	if err != nil {
+		return line
+	}
+
+	var out bytes.Buffer
+	if isEvent {
+		out.WriteString("data: ")
+	}
+	out.Write(rewritten)
+	out.Write(ending)
+	return out.Bytes()
 }
 
 func (w *meteringWriter) parseLine(line []byte) {
@@ -131,11 +180,13 @@ func (w *meteringWriter) parseLine(line []byte) {
 	}
 }
 
-// finalize flushes any buffered tail (e.g. a non-streamed JSON body with no
+// finalize writes out any buffered tail (e.g. a non-streamed JSON body with no
 // trailing newline) and returns the last usage object seen.
 func (w *meteringWriter) finalize() *usage {
 	if w.tail.Len() > 0 {
 		w.parseLine(w.tail.Bytes())
+		w.ResponseWriter.Write(w.rewriteLine(w.tail.Bytes()))
+		w.tail.Reset()
 	}
 	return w.lastUsage
 }
@@ -155,6 +206,13 @@ func newProxy(upstream *url.URL) *httputil.ReverseProxy {
 	proxy := httputil.NewSingleHostReverseProxy(upstream)
 	proxy.Transport = transport
 	proxy.FlushInterval = -1 // flush every write immediately for SSE
+	// meteringWriter rewrites `model`, which changes the body length, so the
+	// upstream Content-Length no longer holds; let the response be chunked.
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		resp.Header.Del("Content-Length")
+		resp.ContentLength = -1
+		return nil
+	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		log.Printf("proxy error to upstream: %v", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -227,7 +285,7 @@ func proxyHandler(proxy *httputil.ReverseProxy, meter *Meter) gin.HandlerFunc {
 		c.Request.URL.Path = prefix + c.Request.URL.Path // e.g. /coder/v1/chat/completions
 
 		// 4. Proxy while metering the stream.
-		mw := &meteringWriter{ResponseWriter: c.Writer}
+		mw := &meteringWriter{ResponseWriter: c.Writer, model: modelName}
 		proxy.ServeHTTP(mw, c.Request)
 
 		if u := mw.finalize(); u != nil {

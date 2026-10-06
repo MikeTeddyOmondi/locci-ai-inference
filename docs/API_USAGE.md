@@ -98,7 +98,7 @@ curl -s "$LOCCI/v1/chat/completions" \
   "id": "chatcmpl-bT7a1PA4dI3XzIHZlasK222a29FlTGlL",
   "object": "chat.completion",
   "created": 1791314192,
-  "model": "/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+  "model": "qwen-coder-7b",
   "choices": [
     { "index": 0, "finish_reason": "stop", "message": { "role": "assistant", "content": "Hello" } }
   ],
@@ -108,10 +108,7 @@ curl -s "$LOCCI/v1/chat/completions" \
 }
 ```
 
-Request fields are passed through to llama-server, so the usual OpenAI parameters work (`temperature`, `top_p`, `max_tokens`, `stop`, `seed`, `response_format`). Two things differ from OpenAI:
-
-- `model` in the response is the GGUF file the node loaded, not the id you asked for.
-- `timings` is llama.cpp's own performance block (trimmed above).
+Request fields are passed through to llama-server, so the usual OpenAI parameters work (`temperature`, `top_p`, `max_tokens`, `stop`, `seed`, `response_format`). `model` in the response is the id you requested; `timings` is llama.cpp's own performance block (trimmed above), not part of the OpenAI schema.
 
 ### Streaming
 
@@ -131,11 +128,11 @@ curl -sN "$LOCCI/v1/chat/completions" \
 Server-sent events, one `data:` line per token. The gateway always asks the node for usage, so the final chunk before `[DONE]` has empty `choices` and a `usage` block, even if you did not send `stream_options`:
 
 ```text
-data: {"choices":[{"index":0,"finish_reason":null,"delta":{"role":"assistant","content":null}}],"object":"chat.completion.chunk",...}
-data: {"choices":[{"index":0,"finish_reason":null,"delta":{"content":"Sure"}}],"object":"chat.completion.chunk",...}
+data: {"choices":[{"delta":{"content":null,"role":"assistant"},"finish_reason":null,"index":0}],"model":"qwen-coder-7b","object":"chat.completion.chunk",...}
+data: {"choices":[{"delta":{"content":"Sure"},"finish_reason":null,"index":0}],"model":"qwen-coder-7b","object":"chat.completion.chunk",...}
 ...
-data: {"choices":[{"index":0,"finish_reason":"length","delta":{}}],"object":"chat.completion.chunk",...}
-data: {"choices":[],"object":"chat.completion.chunk","usage":{"completion_tokens":6,"prompt_tokens":32,"total_tokens":38},...}
+data: {"choices":[{"delta":{},"finish_reason":"length","index":0}],"model":"qwen-coder-7b","object":"chat.completion.chunk",...}
+data: {"choices":[],"model":"qwen-coder-7b","object":"chat.completion.chunk","usage":{"completion_tokens":6,"prompt_tokens":32,"total_tokens":38},...}
 data: [DONE]
 ```
 
@@ -186,10 +183,10 @@ curl -s "$LOCCI/v1/embeddings" \
 | `401` | Missing, invalid, expired token, or wrong issuer | empty |
 | `404` / `405` | Unknown path / wrong method | plain text |
 | `429` | Rate limit exceeded | empty |
-| `502` | The model's pool is not running | nginx HTML page |
+| `502` | The model's pool is not running | `{"error":{"message":"Model pool unavailable","type":"upstream_error"}}` |
 | `502` | The router cannot reach nginx | `{"error":{"message":"Inference backend unavailable","type":"upstream_error"}}` |
 
-The empty `401`/`429` bodies come from KrakenD, and the HTML `502` from nginx; neither is wrapped in the OpenAI error shape yet. Branch on the status code, not the body.
+The `401` and `429` bodies are empty: KrakenD Community Edition rejects at the edge with a bare status and cannot be configured to send a body (custom error bodies are an Enterprise feature), and nothing sits in front of KrakenD by design, to keep latency down. The `404`/`405` routing errors are KrakenD's plain text for the same reason. Branch on the status code; the `400` and `502` errors carry the OpenAI error shape.
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' "$LOCCI/v1/chat/completions" \
