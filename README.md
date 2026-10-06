@@ -59,8 +59,8 @@ Auth comes from [locci-auth](../locci-auth) running locally. Its users are the t
 
 ```bash
 (cd ../locci-auth && npx wrangler dev --port 8787)   # separate terminal; locci-auth master (issuer fix, PR #5)
-scripts/fetch-models.sh            # 1.3 GB coder model; add --vision (1.8 GB) / --embed (80 MB)
-docker compose up --build -d       # first start waits for both coder nodes to load the model
+scripts/fetch-models.sh            # 2.3 GB of coder models; add --vision (1.8 GB) / --embed (80 MB)
+docker compose up --build -d       # first start waits for the two coder pools to load their models
 scripts/smoke.sh                   # health, 401, 400, /v1/models, a streamed chat, and meter lines
 ```
 
@@ -74,7 +74,7 @@ Manual request:
 TOKEN=$(scripts/locci-auth-token.sh)
 curl -N http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"model":"qwen-coder-7b","stream":true,"messages":[{"role":"user","content":"Reverse a string in Go"}]}'
+  -d '{"model":"qwen3-1.7b","stream":true,"messages":[{"role":"user","content":"Reverse a string in Go"}]}'
 docker compose logs locci-ai-gateway | grep meter
 ```
 
@@ -86,7 +86,8 @@ All on llama.cpp `server-b11434` (pinned), CPU only in the local Colima VM (4 vC
 
 | Requested `model` | Pool | Running | Measured here |
 | --- | --- | --- | --- |
-| `qwen-coder-7b`, `qwen-coder-14b` | coder (2 nodes) | Qwen3-1.7B Q4_K_M, `--reasoning off` | ~50 tokens/s; tool calling passes every check; ~2.1 GiB per node |
+| `qwen3-1.7b` | `/coder` (1 node) | Qwen3-1.7B Q4_K_M, `--reasoning off` | ~50 tokens/s; tool calling passes every check; ~2.1 GiB |
+| `qwen2.5-coder-1.5b` | `/qwen25-coder` (1 node) | Qwen2.5-Coder-1.5B-Instruct Q4_K_M | ~56 tokens/s; code generation; **cannot call tools**; 1.25 to 2.3 GiB |
 | `baidu-ocr-vision` | vision (`--profile vision`) | PaddleOCR-VL 1.6 + mmproj | Exact text and table recognition on the fixtures; 2 to 3 min per new image on CPU |
 | `embedding-nomic` | embed (`--profile embed`) | nomic-embed-text v1.5 Q4_K_M | 768 dims; inputs over 512 tokens fail until `-ub` is raised |
 
@@ -94,20 +95,20 @@ All on llama.cpp `server-b11434` (pinned), CPU only in the local Colima VM (4 vC
 
 | Model id | Call it with | `just chat` | Wrong use gives |
 | --- | --- | --- | --- |
-| `qwen-coder-7b` | `/v1/chat/completions`; SDK `streamText` / `generateText`, tools | Yes | |
-| `qwen-coder-14b` | Same; same model as `qwen-coder-7b`. `just chat`'s default | Yes | |
+| `qwen3-1.7b` | `/v1/chat/completions`; SDK `streamText` / `generateText`, tools. `just chat`'s default | Yes | |
+| `qwen2.5-coder-1.5b` | `/v1/chat/completions`; SDK `streamText` / `generateText`. Code generation, no tools | Yes | With `tools`, the call comes back as plain text in `content` (no `tool_calls`); with `tool_choice: "required"` it runs to `max_tokens` |
 | `baidu-ocr-vision` | `/v1/chat/completions` with an image plus a task prompt (`OCR:`, `Table Recognition:`, ...); SDK `generateText` with a `file` part | No | Junk text for a text-only prompt (measured: `貨貨`) |
 | `embedding-nomic` | `/v1/embeddings`; SDK `embed` / `embedMany` | No | An empty chat stream with no `finish_reason` |
 
 ```bash
-just chat "Solve two sum in JavaScript"                    # qwen-coder-14b, max_tokens 1024
-just chat "Solve two sum in JavaScript" qwen-coder-7b 2048 # model, then max_tokens
+just chat "Solve two sum in JavaScript"                            # qwen3-1.7b, max_tokens 1024
+just chat "Solve two sum in JavaScript" qwen2.5-coder-1.5b 2048 # model, then max_tokens
 just list-models                                           # ids the gateway routes
 ```
 
-`just list-models` lists every id even when its pool is stopped (that request gets a `502`). `just up` starts only the coder pool; `just up-all` adds vision and embed. Examples per endpoint: [docs/API_USAGE.md](docs/API_USAGE.md) (curl) and [docs/SDK_USAGE.md](docs/SDK_USAGE.md).
+`just list-models` lists every id even when its pool is stopped (that request gets a `502`). `just up` starts the two coder pools; `just up-all` adds vision and embed. Examples per endpoint: [docs/API_USAGE.md](docs/API_USAGE.md) (curl) and [docs/SDK_USAGE.md](docs/SDK_USAGE.md).
 
-The ids predate the model choice (`qwen-coder-*` run Qwen3-1.7B). Swap files with `.env` (see `.env.example`), or try one without editing: `CODER_MODEL=<file>.gguf docker compose up -d llama-coder-1 llama-coder-2`. Why these models, what was tried, and candidates (Qwen 3.5, Gemma 4, LFM2.5, Unlimited-OCR, Qwen3-Embedding): [docs/SLMS.md](docs/SLMS.md). Flags, context per request (2048 tokens on the coder nodes) and performance: [docs/LLAMA_SERVER.md](docs/LLAMA_SERVER.md).
+Ids name the model running in each pool. Swap files with `.env` (see `.env.example`), or try one without editing: `CODER_MODEL=<file>.gguf docker compose up -d llama-coder-1`. Why these models, what was tried, and candidates (Qwen 3.5, Gemma 4, LFM2.5, Unlimited-OCR, Qwen3-Embedding): [docs/SLMS.md](docs/SLMS.md). Flags, context per request (2048 tokens on the coder nodes) and performance: [docs/LLAMA_SERVER.md](docs/LLAMA_SERVER.md).
 
 ## Git hooks
 
@@ -131,7 +132,7 @@ Fixes needed to make the reference stack actually run:
 
 - Compose: `depends_on: locci-gateway` renamed to `locci-ai-gateway`; the obsolete `version` key dropped; healthchecks added so nginx waits for models to load.
 - llama.cpp image moved to `ghcr.io/ggml-org/llama.cpp`, pinned to `server-b11434`. A `llama-embed-1` service is added (nginx referenced it but compose did not define it). Vision and embed sit behind profiles.
-- Models: the coder pool runs Qwen3-1.7B (the reference's Qwen2.5-Coder could not call tools), and the vision pool runs PaddleOCR-VL 1.6 with its mmproj instead of LLaVA 1.5.
+- Models and ids: the reference's `qwen-coder-7b` / `qwen-coder-14b` ids are replaced by ids that name what runs. `qwen3-1.7b` (Qwen3-1.7B, tool calling) and `qwen2.5-coder-1.5b` (Qwen2.5-Coder-1.5B, code only; it cannot call tools) each get a pool, and the vision pool runs PaddleOCR-VL 1.6 with its mmproj instead of LLaVA 1.5.
 - Nginx: resolver plus `zone` and `resolve` on upstreams. Without these, a missing pool host stops nginx from starting.
 - KrakenD: global and endpoint `timeout` raised to 600s (the 2s default cuts off generation). The invalid `router.disable_strict_restful` key is removed. Rate limiting is configured. Added the `/v1/embeddings` and `/v1/models` endpoints. Auth is ES256 against locci-auth instead of an HS256 dev key.
 - Router: `/v1/embeddings` shares the chat handler; `/v1/models` lists the registry; responses report the requested model id instead of llama-server's GGUF path; upstream is set by `UPSTREAM_URL`; the Dockerfile copies `go.sum`.

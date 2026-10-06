@@ -10,7 +10,7 @@ Client libraries for the Locci AI Gateway. Each folder is a self-contained packa
 
 A thin layer over `@ai-sdk/openai-compatible`, since the gateway speaks the OpenAI-compatible API. It adds:
 
-- **Locci's model ids**, typed (`qwen-coder-7b`, `embedding-nomic`, ...), with a test that fails if they drift from the router's `ModelRegistry`.
+- **Locci's model ids**, typed (`qwen3-1.7b`, `embedding-nomic`, ...), with a test that fails if they drift from the router's `ModelRegistry`.
 - **Auth**: a Locci API key is exchanged at locci-auth's `/keys/token` for a one-hour access token, cached, and refreshed before expiry or after a `401`. Servers can pass a user's access token instead.
 - **Usage**: always requests token usage, so `result.usage` matches what the gateway meters per tenant.
 
@@ -18,7 +18,7 @@ A thin layer over `@ai-sdk/openai-compatible`, since the gateway speaks the Open
 import { locci } from "@locci/ai-sdk";
 import { streamText } from "ai";
 
-const result = streamText({ model: locci("qwen-coder-7b"), prompt: "Reverse a string in Go" });
+const result = streamText({ model: locci("qwen3-1.7b"), prompt: "Reverse a string in Go" });
 ```
 
 | Path | Contents |

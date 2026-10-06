@@ -49,7 +49,7 @@ after(async () => {
 test("streamText with an API key streams tokens and reports usage", async () => {
   const locci = createLocci({ baseURL: BASE_URL, authURL: AUTH_URL, apiKey });
   const result = streamText({
-    model: locci("qwen-coder-7b"),
+    model: locci("qwen3-1.7b"),
     prompt: "Reply with exactly: hello from locci",
     maxOutputTokens: 16,
   });
@@ -71,7 +71,7 @@ test("streamText with an API key streams tokens and reports usage", async () => 
 test("generateText with a user's access token", async () => {
   const locci = createLocci({ baseURL: BASE_URL, accessToken: ACCESS });
   const { text, usage } = await generateText({
-    model: locci("qwen-coder-7b"),
+    model: locci("qwen3-1.7b"),
     prompt: "Say hi in three words.",
     maxOutputTokens: 12,
   });
@@ -90,7 +90,7 @@ test("an unknown model is a 400 from the gateway, surfaced as an API error", asy
 test("a bad API key fails at exchange with LocciAuthError", async () => {
   const locci = createLocci({ baseURL: BASE_URL, authURL: AUTH_URL, apiKey: "not-a-real-key" });
   await assert.rejects(
-    generateText({ model: locci("qwen-coder-7b"), prompt: "hi", maxRetries: 0 }),
+    generateText({ model: locci("qwen3-1.7b"), prompt: "hi", maxRetries: 0 }),
     (e: unknown) => {
       // The SDK may wrap fetch errors; find ours in the cause chain.
       for (let cur: unknown = e; cur; cur = (cur as { cause?: unknown }).cause) {

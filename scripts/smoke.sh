@@ -15,7 +15,7 @@ code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 
 check "health" 200 "$(code "$BASE/health")"
 check "no token -> 401" 401 "$(code -X POST "$BASE/v1/chat/completions" \
-  -H 'Content-Type: application/json' -d '{"model":"qwen-coder-7b","messages":[]}')"
+  -H 'Content-Type: application/json' -d '{"model":"qwen3-1.7b","messages":[]}')"
 check "unknown model -> 400" 400 "$(code -X POST "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"model":"gpt-9","messages":[]}')"
@@ -24,7 +24,7 @@ check "models list" 200 "$(code -H "Authorization: Bearer $TOKEN" "$BASE/v1/mode
 echo "--- streaming chat (watch tokens arrive) ---"
 curl -sN "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"model":"qwen-coder-7b","stream":true,"max_tokens":64,
+  -d '{"model":"qwen3-1.7b","stream":true,"max_tokens":64,
        "messages":[{"role":"user","content":"Write a Go function to reverse a string."}]}' \
   | while IFS= read -r line; do
       [ -n "$line" ] && printf '%s %s\n' "$(date +%T)" "$(printf '%s' "$line" | cut -c1-110)"

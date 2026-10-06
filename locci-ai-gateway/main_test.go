@@ -87,7 +87,7 @@ func post(t *testing.T, base, path, tenant, body string) *http.Response {
 
 func TestMissingTenantIs401(t *testing.T) {
 	gw, _ := setup(t, func(w http.ResponseWriter, r *http.Request) { t.Error("upstream must not be called") })
-	resp := post(t, gw.URL, "/v1/chat/completions", "", `{"model":"qwen-coder-7b"}`)
+	resp := post(t, gw.URL, "/v1/chat/completions", "", `{"model":"qwen3-1.7b"}`)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("want 401, got %d", resp.StatusCode)
 	}
@@ -120,7 +120,7 @@ func TestStreamIsRoutedRewrittenAndMetered(t *testing.T) {
 		io.WriteString(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":1,\"total_tokens\":3}}\n\ndata: [DONE]\n\n")
 	})
 
-	resp := post(t, gw.URL, "/v1/chat/completions", "acme", `{"model":"qwen-coder-7b","stream":true,"messages":[]}`)
+	resp := post(t, gw.URL, "/v1/chat/completions", "acme", `{"model":"qwen3-1.7b","stream":true,"messages":[]}`)
 	got, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(got), "[DONE]") {
 		t.Fatalf("bad response %d: %s", resp.StatusCode, got)
@@ -128,7 +128,7 @@ func TestStreamIsRoutedRewrittenAndMetered(t *testing.T) {
 
 	select {
 	case e := <-sink:
-		if e.Tenant != "acme" || e.Model != "qwen-coder-7b" || e.Pool != "/coder" || e.TotalTokens != 3 {
+		if e.Tenant != "acme" || e.Model != "qwen3-1.7b" || e.Pool != "/coder" || e.TotalTokens != 3 {
 			t.Fatalf("unexpected meter event: %+v", e)
 		}
 	case <-time.After(2 * time.Second):
@@ -162,7 +162,7 @@ func TestUpstreamDownIs502(t *testing.T) {
 	u, _ := url.Parse("http://127.0.0.1:1")
 	gw := httptest.NewServer(newRouter(u, NewMeter(LogSink{}, 1)))
 	defer gw.Close()
-	resp := post(t, gw.URL, "/v1/chat/completions", "acme", `{"model":"qwen-coder-7b"}`)
+	resp := post(t, gw.URL, "/v1/chat/completions", "acme", `{"model":"qwen3-1.7b"}`)
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("want 502, got %d", resp.StatusCode)
 	}
@@ -179,13 +179,13 @@ func TestModelRewrittenInEveryStreamChunk(t *testing.T) {
 		io.WriteString(w, "\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":1,\"total_tokens\":3}}\n\ndata: [DONE]\n\n")
 	})
 
-	resp := post(t, gw.URL, "/v1/chat/completions", "acme", `{"model":"qwen-coder-7b","stream":true,"messages":[]}`)
+	resp := post(t, gw.URL, "/v1/chat/completions", "acme", `{"model":"qwen3-1.7b","stream":true,"messages":[]}`)
 	got, _ := io.ReadAll(resp.Body)
 	body := string(got)
 	if strings.Contains(body, "/models/qwen.gguf") {
 		t.Fatalf("GGUF path leaked to the client:\n%s", body)
 	}
-	if strings.Count(body, `"model":"qwen-coder-7b"`) != 2 || !strings.Contains(body, "data: [DONE]\n\n") {
+	if strings.Count(body, `"model":"qwen3-1.7b"`) != 2 || !strings.Contains(body, "data: [DONE]\n\n") {
 		t.Fatalf("unexpected stream:\n%s", body)
 	}
 	select {
@@ -206,12 +206,12 @@ func TestModelRewrittenInPlainBodyWithContentLength(t *testing.T) {
 		io.WriteString(w, upstreamBody)
 	})
 
-	resp := post(t, gw.URL, "/v1/chat/completions", "acme", `{"model":"qwen-coder-7b","messages":[]}`)
+	resp := post(t, gw.URL, "/v1/chat/completions", "acme", `{"model":"qwen3-1.7b","messages":[]}`)
 	var body map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("body is not complete JSON (stale Content-Length?): %v", err)
 	}
-	if body["model"] != "qwen-coder-7b" {
+	if body["model"] != "qwen3-1.7b" {
 		t.Fatalf("model not rewritten: %v", body["model"])
 	}
 }

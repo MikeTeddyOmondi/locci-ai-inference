@@ -6,11 +6,12 @@ How to run any of these is in [LLAMA_SERVER.md](LLAMA_SERVER.md).
 
 ## What we serve now
 
-The gateway's model ids are placeholders that predate the model choice: `qwen-coder-7b` and `qwen-coder-14b` both run Qwen3-1.7B locally. Everything runs in the Colima VM (4 vCPU, 7.7 GiB, CPU only), on llama.cpp `server-b11434` (pinned).
+Each gateway model id names the model running in its pool. Everything runs in the Colima VM (4 vCPU, 7.7 GiB, CPU only), on llama.cpp `server-b11434` (pinned).
 
 | Gateway id | Pool | Running | Status (measured on this stack) |
 | --- | --- | --- | --- |
-| `qwen-coder-7b`, `qwen-coder-14b` | coder | **Qwen3-1.7B** Q4_K_M (1.28 GB, ggml-org), `--reasoning off` | Chat and code ~50 tokens/s generation, ~190 tokens/s prompt. **Tool calling passes** every `just tools-api` / `just tools-sdk` check, 3 runs in a row. ~2.1 GiB resident per node. |
+| `qwen2.5-coder-1.5b` | qwen25-coder (1 node) | Qwen2.5-Coder-1.5B-Instruct Q4_K_M (1.0 GB) | Code generation, ~56 tokens/s. **Cannot call tools** (see below). 1.25 to 2.3 GiB resident. |
+| `qwen3-1.7b` | coder (1 node) | **Qwen3-1.7B** Q4_K_M (1.28 GB, ggml-org), `--reasoning off` | Chat and code ~50 tokens/s generation, ~190 tokens/s prompt. **Tool calling passes** every `just tools-api` / `just tools-sdk` check, 3 runs in a row. ~2.1 GiB resident per node. |
 | `baidu-ocr-vision` | vision | **PaddleOCR-VL 1.6** (0.94 GB) + mmproj (0.88 GB), `--temp 0` | `just ocr-api` passes: exact text from an invoice image, and a 3x3 table. **Slow on CPU**: 110 to 180 s per image (see below). ~1.5 GiB resident. |
 | `embedding-nomic` | embed | nomic-embed-text v1.5 Q4_K_M (80 MB) | 768 dims. Inputs over 512 tokens fail until `-ub` is raised. |
 
@@ -26,9 +27,9 @@ The gateway's model ids are placeholders that predate the model choice: `qwen-co
 - **Output:** `OCR:` returns plain text with line breaks. **`Table Recognition:` returns OTSL tokens, not HTML or Markdown**: `<fcel>` starts a cell, `<nl>` ends a row, e.g. `<fcel>Model<fcel>Pool<nl><fcel>Qwen3-1.7B<fcel>coder<nl>`. Clients convert it (empty cells and spans use further OTSL tokens such as `<ecel>`, `<lcel>`, `<ucel>`).
 - **Speed:** generation is fine (13 to 14 tokens/s), but encoding the image is CPU-bound at ~2.8 tokens/s of prompt: 175 s for a 900x420 invoice (493 prompt tokens) and 109 s for a small table (313). Expect minutes per page on this VM. A GPU, more cores, or a quantized mmproj (only F16 is published officially) are the levers. Callers need generous timeouts; the gateway's are 600 s.
 
-### Previous coder model: Qwen2.5-Coder-1.5B (retired)
+### Qwen2.5-Coder-1.5B (`qwen2.5-coder-1.5b` pool), measured
 
-It could not call tools: given a `get_weather` tool it wrote the call as a markdown JSON block (or `{{"name": ...}}`, copying literal braces from its own template) instead of `<tool_call>` tags, so llama-server parsed nothing, and `tool_choice: "required"` did not force it on this build. A same-size general model, Qwen2.5-1.5B-Instruct, passed the same checks, which isolated the coder fine-tune as the problem. Details in [LLAMA_SERVER.md](LLAMA_SERVER.md#tool-calling).
+Served for code generation (~56 tokens/s). It cannot call tools: given a `get_weather` tool it wrote the call as a markdown JSON block (or `{{"name": ...}}`, copying literal braces from its own template) instead of `<tool_call>` tags, so llama-server parsed nothing, and `tool_choice: "required"` did not force it on this build. A same-size general model, Qwen2.5-1.5B-Instruct, passed the same checks, which isolated the coder fine-tune as the problem. Details in [LLAMA_SERVER.md](LLAMA_SERVER.md#tool-calling). It used to back the coder pool alone; it now has its own pool and id so tool-calling clients use `qwen3-1.7b`.
 
 ## Candidates
 
@@ -44,12 +45,12 @@ Sizes are approximate Q4_K_M files. "Fits" is for this 7.7 GiB VM with the other
 | **Qwen 3.5 2B / 4B** | ~2 / ~3 GB | Newest Qwen below 27B (Feb to Mar 2026), 262K context, Apache 2.0. 4B is the laptop-class step up. | 2B yes; 4B one node |
 | **Gemma 4 E2B / E4B** | ~1.5 / ~3 GB | Native function calling, 128K context, multimodal (image, audio). Thinking on by default: tool calls land in `reasoning_content` unless disabled. | E2B yes; E4B one node |
 | **Qwen 3.5 9B** | ~6 GB | Recommended 8 GB-tier pick for tool calling in a mid-2026 guide. | No (GPU box) |
-| **Qwen2.5-Coder-7B** | ~4.7 GB | What `qwen-coder-7b` names. Strong code completion, older tool-calling. | One node only |
+| **Qwen2.5-Coder-7B** | ~4.7 GB | What `qwen3-1.7b` names. Strong code completion, older tool-calling. | One node only |
 | Phi-4-mini (3.8B), SmolLM3-3B | ~2.5 / ~2 GB | Solid 3 to 4B generalists; worth a look if Qwen or Gemma disappoint. | One to two nodes |
 
 Qwen 3.6 and 3.8 start at 27B and Gemma 4's next size is 12B: GPU territory, not SLMs for this box.
 
-**Next to try:** Qwen 3.5 2B (newer, longer context) against Qwen3-1.7B with the same checks. Memory is the constraint: two Qwen3-1.7B nodes already take ~4.2 GiB.
+**Next to try:** Qwen 3.5 2B (newer, longer context) against Qwen3-1.7B with the same checks. Memory is the constraint: the four pools already take ~5.8 GiB of 7.7.
 
 ### Document OCR and vision (`vision` pool)
 
@@ -98,7 +99,7 @@ Changing the embedding model changes the vector space (and possibly the dimensio
 3. If the id should change, edit `ModelRegistry` in `locci-ai-gateway/main.go` **and** `packages/ai-sdk/src/models.ts`; `just sdk-test` fails if they disagree.
 4. `just up`, then `just smoke`, `just tools-api`, `just tools-sdk` and `just sdk-e2e`.
 
-The ids are placeholders today (`qwen-coder-7b` runs Qwen3-1.7B). When the real models are chosen, ids that name the capability (`locci-coder`, `locci-ocr`) would let the model behind them change without breaking clients.
+Ids currently name the model (`qwen3-1.7b`, `qwen2.5-coder-1.5b`): honest, but a model swap changes the id clients use. Capability ids (`locci-coder`, `locci-ocr`) would let the model behind them change without breaking clients; worth deciding before external clients depend on the names.
 
 ## Sources
 

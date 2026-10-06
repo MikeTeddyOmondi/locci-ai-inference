@@ -6,7 +6,7 @@
 import { locci } from "@locci/ai-sdk";
 import { streamText, embed } from "ai";
 
-const result = streamText({ model: locci("qwen-coder-7b"), prompt: "Reverse a string in Go" });
+const result = streamText({ model: locci("qwen3-1.7b"), prompt: "Reverse a string in Go" });
 for await (const delta of result.textStream) process.stdout.write(delta);
 
 const { embedding } = await embed({ model: locci.embeddingModel("embedding-nomic"), value: "hello" });
@@ -46,7 +46,7 @@ import { createLocci } from "@locci/ai-sdk";
 export async function POST({ request, locals }) {
   const { messages } = await request.json();
   const locci = createLocci({ accessToken: locals.accessToken });
-  return streamText({ model: locci("qwen-coder-7b"), messages: await convertToModelMessages(messages) })
+  return streamText({ model: locci("qwen3-1.7b"), messages: await convertToModelMessages(messages) })
     .toUIMessageStreamResponse();
 }
 ```

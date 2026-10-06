@@ -16,11 +16,12 @@ import (
 )
 
 // ModelRegistry maps the requested model to the Nginx routing prefix (pool).
+// Ids name the model that actually runs in the pool.
 var ModelRegistry = map[string]string{
-	"qwen-coder-7b":    "/coder",
-	"qwen-coder-14b":   "/coder",
-	"baidu-ocr-vision": "/vision",
-	"embedding-nomic":  "/embed",
+	"qwen3-1.7b":         "/coder",        // chat, code, tool calling
+	"qwen2.5-coder-1.5b": "/qwen25-coder", // code generation only; cannot call tools
+	"baidu-ocr-vision":   "/vision",
+	"embedding-nomic":    "/embed",
 }
 
 // --- Metering ---------------------------------------------------------------

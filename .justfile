@@ -30,7 +30,7 @@ models *flags:
 
 # -- stack --------------------------------------------------------------------
 
-# Build and start the stack (coder pool), waiting until everything is healthy.
+# Build and start the stack (both chat pools), waiting until everything is healthy.
 up:
     docker compose up --build -d --wait --wait-timeout 600
 
@@ -72,7 +72,7 @@ smoke:
 # Stream one chat completion through the edge, e.g. `just chat "Reverse a string in Go"`.
 # max_tokens caps the answer; a cut-off answer is flagged, not silent. Prompt
 # plus answer must fit the 2048-token per-request window (docs/LLAMA_SERVER.md).
-chat prompt="Write a Go function to reverse a string." model="qwen-coder-14b" max_tokens="1024":
+chat prompt="Write a Go function to reverse a string." model="qwen3-1.7b" max_tokens="1024":
     #!/usr/bin/env sh
     set -eu
     TOKEN=$(scripts/locci-auth-token.sh)
@@ -156,7 +156,7 @@ check:
 chat-local prompt="Say hi in five words." tenant="dev-local":
     #!/usr/bin/env sh
     set -eu
-    BODY=$(python3 -c 'import json,sys; print(json.dumps({"model":"qwen-coder-7b","stream":True,"max_tokens":64,"messages":[{"role":"user","content":sys.argv[1]}]}))' '{{prompt}}')
+    BODY=$(python3 -c 'import json,sys; print(json.dumps({"model":"qwen3-1.7b","stream":True,"max_tokens":64,"messages":[{"role":"user","content":sys.argv[1]}]}))' '{{prompt}}')
     curl -sN http://localhost{{listen}}/v1/chat/completions \
       -H 'X-Locci-Tenant: {{tenant}}' -H 'Content-Type: application/json' -d "$BODY"
 

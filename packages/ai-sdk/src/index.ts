@@ -7,7 +7,7 @@
  *   import { locci } from "@locci/ai-sdk";
  *   import { streamText } from "ai";
  *
- *   const result = streamText({ model: locci("qwen-coder-7b"), prompt: "..." });
+ *   const result = streamText({ model: locci("qwen3-1.7b"), prompt: "..." });
  */
 
 import {

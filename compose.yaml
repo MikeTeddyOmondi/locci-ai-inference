@@ -1,4 +1,4 @@
-# Default `docker compose up` runs the coder pool only.
+# Default `docker compose up` runs the two coder pools (Qwen3, Qwen2.5-Coder).
 # Optional pools: `docker compose --profile vision --profile embed up`.
 # GPU: uncomment the `deploy` block on an inference service (needs the
 # NVIDIA Container Toolkit; not available on Docker Desktop for Mac).
@@ -73,22 +73,26 @@ services:
     depends_on:
       llama-coder-1:
         condition: service_healthy
-      llama-coder-2:
+      llama-qwen25-coder-1:
         condition: service_healthy
     networks:
       - locci-network
 
-  # 4. Inference: Coder Pool (2 nodes, continuous batching enabled)
+  # 4a. Inference: Coder Pool, model id `qwen3-1.7b` (chat, code, tool calling)
   # Qwen3 is a thinking model; --reasoning off keeps answers and tool calls in
   # `content` / `tool_calls` instead of `reasoning_content`. --jinja is the
   # default on this build, set explicitly because tool calling depends on it.
+  # One node to leave memory for the Qwen2.5-Coder pool; to scale, copy this
+  # service as llama-coder-2 and add it to coder_pool in nginx/nginx.conf.
   llama-coder-1:
     <<: *llama
     command: ["-m", "/models/${CODER_MODEL:-Qwen3-1.7B-Q4_K_M.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--cont-batching", "--parallel", "${LLAMA_PARALLEL:-4}", "--jinja", "--reasoning", "${CODER_REASONING:-off}"]
 
-  llama-coder-2:
+  # 4b. Inference: Qwen2.5-Coder Pool, model id `qwen2.5-coder-1.5b`
+  # Code generation only: this model cannot produce tool calls (docs/SLMS.md).
+  llama-qwen25-coder-1:
     <<: *llama
-    command: ["-m", "/models/${CODER_MODEL:-Qwen3-1.7B-Q4_K_M.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--cont-batching", "--parallel", "${LLAMA_PARALLEL:-4}", "--jinja", "--reasoning", "${CODER_REASONING:-off}"]
+    command: ["-m", "/models/${QWEN25_CODER_MODEL:-qwen2.5-coder-1.5b-instruct-q4_k_m.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--cont-batching", "--parallel", "${LLAMA_PARALLEL:-4}"]
 
   # 5. Inference: Vision/OCR Pool (opt-in)
   # PaddleOCR-VL 1.6: send an image plus a task prompt (`OCR:`, `Table

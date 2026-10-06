@@ -20,8 +20,11 @@ fetch() { # url filename
 
 HF=https://huggingface.co
 
-# Coder pool: Qwen3-1.7B (ggml-org is the llama.cpp project's own repo).
+# Pool for `qwen3-1.7b` (ggml-org is the llama.cpp project's own repo).
 fetch "$HF/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf" Qwen3-1.7B-Q4_K_M.gguf
+# Pool for `qwen2.5-coder-1.5b`: code generation only.
+fetch "$HF/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" \
+  qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
 
 for arg in "$@"; do
   case "$arg" in

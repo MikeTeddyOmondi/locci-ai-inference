@@ -14,11 +14,12 @@ Each node is one `llama-server` process serving one GGUF model over an OpenAI-co
 
 | Service | Pool | Model file | Profile |
 | --- | --- | --- | --- |
-| `llama-coder-1`, `llama-coder-2` | `/coder` | `Qwen3-1.7B-Q4_K_M.gguf` | default |
+| `llama-coder-1` | `/coder` (id `qwen3-1.7b`) | `Qwen3-1.7B-Q4_K_M.gguf` | default |
+| `llama-qwen25-coder-1` | `/qwen25-coder` (id `qwen2.5-coder-1.5b`) | `qwen2.5-coder-1.5b-instruct-q4_k_m.gguf` | default |
 | `llama-vision-1` | `/vision` | `PaddleOCR-VL-1.6.gguf` + `PaddleOCR-VL-1.6-mmproj.gguf` | `vision` |
 | `llama-embed-1` | `/embed` | `nomic-embed-text-v1.5.Q4_K_M.gguf` | `embed` |
 
-Filenames come from `.env` (`CODER_MODEL`, `VISION_MODEL`, `VISION_MMPROJ`, `EMBED_MODEL`, plus `CODER_REASONING`); see `.env.example`. `just models --vision --embed` downloads them. Which models and why: [SLMS.md](SLMS.md).
+Filenames come from `.env` (`CODER_MODEL`, `QWEN25_CODER_MODEL`, `VISION_MODEL`, `VISION_MMPROJ`, `EMBED_MODEL`, plus `CODER_REASONING`); see `.env.example`. `just models --vision --embed` downloads them. Which models and why: [SLMS.md](SLMS.md).
 
 ## The image
 
@@ -94,7 +95,7 @@ curl -s http://localhost:8082/coder/apply-template -H 'content-type: application
 
 **Now (Qwen3-1.7B, `--reasoning off`): every check passes**, three runs in a row: forced calls parse into `tool_calls`, results round-trip, streamed calls reassemble, and `"auto"` calls the tool when the question needs it but not for unrelated prompts. `/props` reports `supports_tools`, `supports_tool_calls` and `supports_parallel_tool_calls` all true.
 
-**Before (Qwen2.5-Coder-1.5B, retired): both scripts failed**, which is why the coder model changed:
+**Qwen2.5-Coder-1.5B (id `qwen2.5-coder-1.5b`): both scripts fail**, which is why tool-calling clients use `qwen3-1.7b`. Rerun with `MODEL=qwen2.5-coder-1.5b scripts/tool-calls-api.sh`:
 
 - **The model does not use the format.** Asked for the weather in Nairobi with a `get_weather` tool, it writes the call as a markdown ```` ```json ```` block, or as `{{"name": ...}}` copying literal double braces that appear in Qwen2.5's template. No `<tool_call>` tags, so nothing is parsed and the call arrives as text.
 - **`tool_choice: "required"` does not force a call on this build.** The generated grammar is `root ::= "<|im_start|>assistant\n" space until-168? tool-calls`, where `until-168` permits any text before the first `<tool_call>`. A model that never emits the tag writes until `max_tokens` (`finish_reason: "length"`). The AI SDK then throws `AI_ToolChoiceViolationError`.
@@ -104,9 +105,9 @@ The template, the parser, our router and the SDK all behaved correctly; the gate
 **Control:** a same-size general model, Qwen2.5-1.5B-Instruct, passed every check on the same build, isolating the coder fine-tune as the problem. Any model can be tried the same way without editing files:
 
 ```bash
-CODER_MODEL=<file>.gguf docker compose up -d --wait llama-coder-1 llama-coder-2
+CODER_MODEL=<file>.gguf docker compose up -d --wait llama-coder-1
 just tools-api && just tools-sdk
-docker compose up -d --wait llama-coder-1 llama-coder-2   # back to the configured model
+docker compose up -d --wait llama-coder-1   # back to the configured model
 ```
 
 ### Writing tool-calling checks
@@ -149,12 +150,12 @@ Colima VM, 4 vCPU, 7.7 GiB RAM, CPU only, b11434:
 
 | Node | Resident memory | Speed |
 | --- | --- | --- |
-| coder (Qwen3-1.7B Q4_K_M, `-c 8192`) | ~2.1 GiB each | ~50 tokens/s generation, ~190 tokens/s prompt |
+| coder (Qwen3-1.7B Q4_K_M, `-c 8192`) | ~2.1 GiB | ~50 tokens/s generation, ~190 tokens/s prompt |
 | vision (PaddleOCR-VL 1.6 + F16 mmproj) | ~1.5 GiB | 13 to 14 tokens/s generation; **image prompts ~2.8 tokens/s**: 110 to 180 s per image |
 | embed (nomic Q4_K_M) | ~100 to 150 MiB | |
-| (retired) coder Qwen2.5-Coder-1.5B | ~1.25 GiB each | ~56 tokens/s generation |
+| qwen25-coder (Qwen2.5-Coder-1.5B Q4_K_M, `-c 8192`) | 2.3 GiB just after start; 1.25 GiB measured after hours of running | ~56 tokens/s generation |
 
-All four nodes together use ~5.8 GiB of the 7.7 GiB VM: there is no room for another coder node or a bigger model. A 7B Q4_K_M model needs ~4.5 to 5 GiB per node.
+The four nodes (one per pool) together use ~5.8 GiB of the 7.7 GiB VM: there is no room for a second Qwen3 node or a bigger model. A 7B Q4_K_M model needs ~4.5 to 5 GiB per node.
 
 The vision encoder is the slow part on CPU: the 900x420 test invoice (493 prompt tokens, mostly image) took 175 s to read and 4 s to write out. Long timeouts are already in place (600 s at KrakenD and nginx), but real documents want a GPU.
 

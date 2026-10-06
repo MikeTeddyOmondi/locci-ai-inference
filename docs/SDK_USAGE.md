@@ -43,7 +43,7 @@ import { streamText } from "ai";
 import { locci } from "@locci/ai-sdk";
 
 const result = streamText({
-  model: locci("qwen-coder-7b"),
+  model: locci("qwen3-1.7b"),
   prompt: "Write a Go function that reverses a string.",
   maxOutputTokens: 200,
 });
@@ -62,7 +62,7 @@ import { generateText } from "ai";
 import { locci } from "@locci/ai-sdk";
 
 const { text, usage, finishReason } = await generateText({
-  model: locci("qwen-coder-7b"),
+  model: locci("qwen3-1.7b"),
   system: "You are terse.",
   prompt: "What does `defer` do in Go? One sentence.",
   maxOutputTokens: 60,
@@ -88,7 +88,7 @@ if (!prompt) {
 }
 
 const locci = createLocci(); // same as the default instance; pass options to override
-const result = streamText({ model: locci("qwen-coder-7b"), prompt });
+const result = streamText({ model: locci("qwen3-1.7b"), prompt });
 for await (const delta of result.textStream) process.stdout.write(delta);
 process.stdout.write("\n");
 ```
@@ -119,7 +119,7 @@ console.log("banana bread:", cosineSimilarity(query, embeddings[1]).toFixed(3));
 
 ## Tool calling
 
-The coder models (Qwen3-1.7B locally) call tools through the standard AI SDK API. `just tools-sdk` checks this end to end.
+`qwen3-1.7b` calls tools through the standard AI SDK API (`qwen2.5-coder-1.5b` cannot). `just tools-sdk` checks this end to end.
 
 ```ts
 // file: tools.ts
@@ -128,7 +128,7 @@ import { z } from "zod";
 import { locci } from "@locci/ai-sdk";
 
 const { text, steps } = await generateText({
-  model: locci("qwen-coder-7b"),
+  model: locci("qwen3-1.7b"),
   tools: {
     getWeather: tool({
       description: "Get the current weather for a city",
@@ -224,7 +224,7 @@ try {
 
 try {
   await generateText({
-    model: createLocci({ apiKey: "not-a-key" })("qwen-coder-7b"),
+    model: createLocci({ apiKey: "not-a-key" })("qwen3-1.7b"),
     prompt: "hi",
     maxRetries: 0,
   });
@@ -264,7 +264,7 @@ export async function POST(req: Request) {
 
   const locci = createLocci({ accessToken });
   const result = streamText({
-    model: locci("qwen-coder-7b"),
+    model: locci("qwen3-1.7b"),
     messages: await convertToModelMessages(messages),
   });
   return result.toUIMessageStreamResponse();
@@ -288,7 +288,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
   const locci = createLocci({ accessToken });
   const result = streamText({
-    model: locci("qwen-coder-7b"),
+    model: locci("qwen3-1.7b"),
     messages: await convertToModelMessages(messages),
   });
   return result.toUIMessageStreamResponse();
@@ -363,13 +363,14 @@ export function Chat() {
 // file: models.ts
 import { LOCCI_CHAT_MODELS, LOCCI_EMBEDDING_MODELS, type LocciChatModelId } from "@locci/ai-sdk";
 
-const pick: LocciChatModelId = "qwen-coder-7b"; // autocompletes; other strings still allowed
+const pick: LocciChatModelId = "qwen3-1.7b"; // autocompletes; other strings still allowed
 console.log(LOCCI_CHAT_MODELS, LOCCI_EMBEDDING_MODELS, pick);
 ```
 
 | Id | Kind | Running locally |
 | --- | --- | --- |
-| `qwen-coder-7b`, `qwen-coder-14b` | chat, code, tools | Qwen3-1.7B (both ids; the names predate the model choice) |
+| `qwen3-1.7b` | chat, code, tools | Qwen3-1.7B |
+| `qwen2.5-coder-1.5b` | code generation; **no tool calling** | Qwen2.5-Coder-1.5B |
 | `baidu-ocr-vision` | document OCR (image in, text out) | PaddleOCR-VL 1.6; vision pool off by default |
 | `embedding-nomic` | embeddings | nomic-embed-text v1.5, 768 dimensions |
 
