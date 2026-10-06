@@ -86,7 +86,9 @@ services:
   # service as llama-coder-2 and add it to coder_pool in nginx/nginx.conf.
   llama-coder-1:
     <<: *llama
-    command: ["-m", "/models/${CODER_MODEL:-Qwen3-1.7B-Q4_K_M.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--cont-batching", "--parallel", "${LLAMA_PARALLEL:-4}", "--jinja", "--reasoning", "${CODER_REASONING:-off}"]
+    # 16384 / 2 slots = 8192 tokens per request: tool schemas plus tool results
+    # overflow 2048 (the examples' 16 tools alone are ~2.5k tokens).
+    command: ["-m", "/models/${CODER_MODEL:-Qwen3-1.7B-Q4_K_M.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "${CODER_CTX:-16384}", "--cont-batching", "--parallel", "${CODER_PARALLEL:-2}", "--jinja", "--reasoning", "${CODER_REASONING:-off}"]
 
   # 4b. Inference: Qwen2.5-Coder Pool, model id `qwen2.5-coder-1.5b`
   # Code generation only: this model cannot produce tool calls (docs/SLMS.md).

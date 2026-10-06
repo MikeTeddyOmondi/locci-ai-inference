@@ -35,9 +35,9 @@ Filenames come from `.env` (`CODER_MODEL`, `QWEN25_CODER_MODEL`, `VISION_MODEL`,
 | --- | --- | --- |
 | `-m /models/<file>` | all | The GGUF to load. |
 | `--host 0.0.0.0 --port 8080` | all | Listen inside the container network. |
-| `-c 8192` | coder | **Total** context, shared by all slots (see below). |
-| `--cont-batching` | coder | Batch concurrent requests into one forward pass. Already the default; kept for clarity. |
-| `--parallel 4` | coder | 4 slots: up to 4 requests generate concurrently per node. |
+| `-c 16384 --parallel 2` | coder (`qwen3-1.7b`) | **Total** context, shared by 2 slots: 8192 tokens per request (see below). `CODER_CTX` / `CODER_PARALLEL` in `.env`. |
+| `-c 8192 --parallel 4` | qwen25-coder | 4 slots of 2048 tokens. |
+| `--cont-batching` | both coder pools | Batch concurrent requests into one forward pass. Already the default; kept for clarity. |
 | `--jinja --reasoning off` | coder | Use the model's own template (the default, set explicitly because tool calling depends on it) and keep Qwen3's thinking off so answers and tool calls land in `content` / `tool_calls`. `CODER_REASONING` in `.env` overrides. |
 | `--mmproj <file>` | vision | The image projector (vision encoder) that pairs with the language model. |
 | `-c 8192 --parallel 2 --temp 0` | vision | 2 slots of 4096 tokens (an image costs ~300 to 500 tokens); greedy decoding as the model card recommends. |
@@ -45,7 +45,9 @@ Filenames come from `.env` (`CODER_MODEL`, `QWEN25_CODER_MODEL`, `VISION_MODEL`,
 
 ### Context is split across slots
 
-`-c` is the total KV cache, divided by `--parallel`. The coder nodes log `n_slots = 4, n_ctx_slot = 2048`, so **each request gets 2048 tokens for prompt plus output**, not 8192. A longer conversation fails with a context-size error. Raise `-c` (memory grows with it) or lower `--parallel` (less concurrency) to change the trade-off; `/props` reports the per-slot value as `default_generation_settings.n_ctx`.
+`-c` is the total KV cache, divided by `--parallel`: **each request gets `-c / --parallel` tokens for prompt plus output**. The `qwen3-1.7b` node logs `n_slots = 2, n_ctx_slot = 8192`; the `qwen2.5-coder-1.5b` node `n_slots = 4, n_ctx_slot = 2048`. A request that doesn't fit fails with `request (N tokens) exceeds the available context size`. Raise `-c` (memory grows with it) or lower `--parallel` (less concurrency) to change the trade-off; `/props` reports the per-slot value as `default_generation_settings.n_ctx`.
+
+**Tool schemas count.** Every request with `tools` carries their JSON schemas in the prompt. The examples' API registers 16 tools (`weather`, `search` and 14 filesystem MCP tools), which makes a one-line question ~2,550 prompt tokens before any answer, and ~5,200 by the time a tool result is in. At the original 2048 per request that failed outright; it is why the `qwen3-1.7b` node runs `-c 16384 --parallel 2`. A tool loop also accumulates every tool result, so heavy results (a Firecrawl search can return ~6,000 characters) need the headroom.
 
 ### Defaults worth knowing
 
@@ -150,12 +152,12 @@ Colima VM, 4 vCPU, 7.7 GiB RAM, CPU only, b11434:
 
 | Node | Resident memory | Speed |
 | --- | --- | --- |
-| coder (Qwen3-1.7B Q4_K_M, `-c 8192`) | ~2.1 GiB | ~50 tokens/s generation, ~190 tokens/s prompt |
+| coder (Qwen3-1.7B Q4_K_M, `-c 16384`) | ~3.3 GiB (2.1 GiB at `-c 8192`) | ~50 tokens/s generation, ~190 tokens/s prompt |
 | vision (PaddleOCR-VL 1.6 + F16 mmproj) | ~1.5 GiB | 13 to 14 tokens/s generation; **image prompts ~2.8 tokens/s**: 110 to 180 s per image |
 | embed (nomic Q4_K_M) | ~100 to 150 MiB | |
 | qwen25-coder (Qwen2.5-Coder-1.5B Q4_K_M, `-c 8192`) | 2.3 GiB just after start; 1.25 GiB measured after hours of running | ~56 tokens/s generation |
 
-The four nodes (one per pool) together use ~5.8 GiB of the 7.7 GiB VM: there is no room for a second Qwen3 node or a bigger model. A 7B Q4_K_M model needs ~4.5 to 5 GiB per node.
+The four nodes (one per pool) together use ~5.9 GiB of the 7.7 GiB VM: there is no room for a second Qwen3 node or a bigger model. A 7B Q4_K_M model needs ~4.5 to 5 GiB per node.
 
 The vision encoder is the slow part on CPU: the 900x420 test invoice (493 prompt tokens, mostly image) took 175 s to read and 4 s to write out. Long timeouts are already in place (600 s at KrakenD and nginx), but real documents want a GPU.
 

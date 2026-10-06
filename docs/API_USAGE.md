@@ -110,7 +110,7 @@ curl -s "$LOCCI_AI_GATEWAY/v1/chat/completions" \
 }
 ```
 
-**Check `finish_reason`.** `"stop"` means the model finished; `"length"` means it hit `max_tokens` and the answer is cut off mid-sentence, even though the stream ends normally with `[DONE]`. Raise `max_tokens` (prompt plus answer must fit the 2048-token per-request window, see [LLAMA_SERVER.md](LLAMA_SERVER.md#context-is-split-across-slots)). Requests without `max_tokens` generate until the window is full.
+**Check `finish_reason`.** `"stop"` means the model finished; `"length"` means it hit `max_tokens` and the answer is cut off mid-sentence, even though the stream ends normally with `[DONE]`. Raise `max_tokens` (prompt plus answer must fit the per-request window: 8192 tokens on `qwen3-1.7b`, 2048 on `qwen2.5-coder-1.5b`; see [LLAMA_SERVER.md](LLAMA_SERVER.md#context-is-split-across-slots)). Requests without `max_tokens` generate until the window is full.
 
 Request fields are passed through to llama-server, so the usual OpenAI parameters work (`temperature`, `top_p`, `max_tokens`, `stop`, `seed`, `response_format`). `model` in the response is the id you requested; `timings` is llama.cpp's own performance block (trimmed above), not part of the OpenAI schema.
 

@@ -71,7 +71,8 @@ smoke:
 
 # Stream one chat completion through the edge, e.g. `just chat "Reverse a string in Go"`.
 # max_tokens caps the answer; a cut-off answer is flagged, not silent. Prompt
-# plus answer must fit the 2048-token per-request window (docs/LLAMA_SERVER.md).
+# plus answer must fit the per-request window: 8192 tokens on qwen3-1.7b, 2048 on
+# qwen2.5-coder-1.5b (docs/LLAMA_SERVER.md).
 chat prompt="Write a Go function to reverse a string." model="qwen3-1.7b" max_tokens="1024":
     #!/usr/bin/env sh
     set -eu
@@ -207,3 +208,36 @@ tools-sdk:
 # Document OCR through the edge with the committed fixtures (needs the vision pool)
 ocr-api:
     scripts/ocr-api.sh {{edge}}
+
+# -- examples (examples/api, cli, web) ------------------------------------------
+# Client apps ported from locci-chat-cli and autonomous-chatbot. The API is the
+# only one that calls models (through @locci/ai-sdk); cli and web are clients.
+# Every recipe that runs code rebuilds the SDK first, so SDK changes are tested.
+
+# Install the workspace (SDK + examples)
+examples-install:
+    pnpm install
+
+# Build the examples' .env files from the original projects (+ a new Locci API key)
+examples-env *flags:
+    node scripts/examples-env.mjs {{flags}}
+
+# Run the example API on :3939 (needs `just up` and `just auth`)
+examples-api: sdk-build
+    pnpm --filter @locci/example-api run dev
+
+# Run the CLI client, e.g. `just examples-cli status`, `chat`, `ask "hi"`, `mcp list`
+examples-cli *args:
+    pnpm --filter @locci/example-cli exec tsx src/cli.ts {{args}}
+
+# Run the OpenTUI terminal chat (needs Bun)
+examples-tui:
+    cd examples/cli && bun src/tui.tsx
+
+# Run the web client on :5173 (Vite dev server)
+examples-web:
+    pnpm --filter @locci/example-web run dev
+
+# Regression checks against the running API: typecheck, web build, CLI and web protocols
+examples-check *flags: sdk-build
+    node scripts/examples-check.mjs {{flags}}

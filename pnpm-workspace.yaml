@@ -1,0 +1,5 @@
+# The SDK and the example clients that exercise it. Examples depend on the SDK
+# with "workspace:*", so they always run against the source in packages/.
+packages:
+  - packages/*
+  - examples/*

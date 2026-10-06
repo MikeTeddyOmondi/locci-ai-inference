@@ -41,4 +41,4 @@ just sdk-e2e       # against the running stack (needs `just up` and `just auth`)
 just tools-sdk     # tool-calling check with the AI SDK
 ```
 
-Each package manages its own dependencies with pnpm; there is no workspace root yet. A new package goes in its own folder here with a row in the table above.
+The repo root is a pnpm workspace (`pnpm-workspace.yaml`) covering `packages/*` and `examples/*`: run `pnpm install` at the root. The example apps in [`../examples`](../examples) depend on this package with `workspace:*`, so `just examples-check` tests the current source. A new package goes in its own folder here with a row in the table above.

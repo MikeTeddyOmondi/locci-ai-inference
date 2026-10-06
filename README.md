@@ -18,6 +18,8 @@ Client --Bearer JWT--> KrakenD :8080 --X-Locci-Tenant--> locci-ai-gateway --> Ng
 | `models/` | GGUF files (git-ignored) |
 | `docs/` | [API_USAGE.md](docs/API_USAGE.md) (curl), [SDK_USAGE.md](docs/SDK_USAGE.md) (`@locci/ai-sdk`), [LLAMA_SERVER.md](docs/LLAMA_SERVER.md) (inference nodes, flags, templates, tool calling), [SLMS.md](docs/SLMS.md) (models we run, measurements, candidates including Baidu's Unlimited-OCR) |
 | `packages/` | Client libraries; see [packages/README.md](packages/README.md). `@locci/ai-sdk` is the Vercel AI SDK provider |
+| `examples/` | Real apps on `@locci/ai-sdk` for catching regressions: `api` (shared chat API), `cli` (terminal + TUI), `web` (SvelteKit); see [examples/README.md](examples/README.md) |
+| `pnpm-workspace.yaml` | One pnpm workspace for `packages/*` and `examples/*`; run `pnpm install` at the root |
 
 ## Dev commands
 
@@ -40,6 +42,7 @@ just tools-api   # tool calling over curl: forced call, result round trip, strea
 just tools-sdk   # the same through the AI SDK and @locci/ai-sdk
 just ocr-api     # PaddleOCR-VL on the fixture images (vision pool; minutes on CPU)
 just sdk-e2e     # @locci/ai-sdk end to end (API-key exchange, streaming, errors)
+just examples-check  # the example apps: CLI and web protocols through examples/api (needs just examples-api)
 ```
 
 Working on the Go router itself, like `locci-bundler`'s recipes:
@@ -86,7 +89,7 @@ All on llama.cpp `server-b11434` (pinned), CPU only in the local Colima VM (4 vC
 
 | Requested `model` | Pool | Running | Measured here |
 | --- | --- | --- | --- |
-| `qwen3-1.7b` | `/coder` (1 node) | Qwen3-1.7B Q4_K_M, `--reasoning off` | ~50 tokens/s; tool calling passes every check; ~2.1 GiB |
+| `qwen3-1.7b` | `/coder` (1 node) | Qwen3-1.7B Q4_K_M, `--reasoning off`, 8192 tokens per request | ~50 tokens/s; tool calling passes every check; ~3.3 GiB |
 | `qwen2.5-coder-1.5b` | `/qwen25-coder` (1 node) | Qwen2.5-Coder-1.5B-Instruct Q4_K_M | ~56 tokens/s; code generation; **cannot call tools**; 1.25 to 2.3 GiB |
 | `baidu-ocr-vision` | vision (`--profile vision`) | PaddleOCR-VL 1.6 + mmproj | Exact text and table recognition on the fixtures; 2 to 3 min per new image on CPU |
 | `embedding-nomic` | embed (`--profile embed`) | nomic-embed-text v1.5 Q4_K_M | 768 dims; inputs over 512 tokens fail until `-ub` is raised |
@@ -108,7 +111,7 @@ just list-models                                           # ids the gateway rou
 
 `just list-models` lists every id even when its pool is stopped (that request gets a `502`). `just up` starts the two coder pools; `just up-all` adds vision and embed. Examples per endpoint: [docs/API_USAGE.md](docs/API_USAGE.md) (curl) and [docs/SDK_USAGE.md](docs/SDK_USAGE.md).
 
-Ids name the model running in each pool. Swap files with `.env` (see `.env.example`), or try one without editing: `CODER_MODEL=<file>.gguf docker compose up -d llama-coder-1`. Why these models, what was tried, and candidates (Qwen 3.5, Gemma 4, LFM2.5, Unlimited-OCR, Qwen3-Embedding): [docs/SLMS.md](docs/SLMS.md). Flags, context per request (2048 tokens on the coder nodes) and performance: [docs/LLAMA_SERVER.md](docs/LLAMA_SERVER.md).
+Ids name the model running in each pool. Swap files with `.env` (see `.env.example`), or try one without editing: `CODER_MODEL=<file>.gguf docker compose up -d llama-coder-1`. Why these models, what was tried, and candidates (Qwen 3.5, Gemma 4, LFM2.5, Unlimited-OCR, Qwen3-Embedding): [docs/SLMS.md](docs/SLMS.md). Flags, context per request (8192 tokens on `qwen3-1.7b`, 2048 on `qwen2.5-coder-1.5b`) and performance: [docs/LLAMA_SERVER.md](docs/LLAMA_SERVER.md).
 
 ## Git hooks
 

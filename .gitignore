@@ -5,3 +5,9 @@ locci-ai-gateway/bin/
 node_modules/
 packages/*/dist/
 **/*.DS_Store
+node-compile-cache/
+tsx-*/
+examples/api/mcp.json
+examples/api/data/
+examples/web/build/
+examples/web/.svelte-kit/

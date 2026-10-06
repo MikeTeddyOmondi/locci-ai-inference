@@ -1,0 +1,28 @@
+{
+  "name": "@locci/example-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared chat API for the CLI and web examples, backed by the Locci AI Gateway through @locci/ai-sdk",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/mcp": "2.0.68",
+    "@libsql/client": "0.18.0",
+    "@locci/ai-sdk": "workspace:*",
+    "@mendable/firecrawl-js": "4.44.0",
+    "ai": "7.0.129",
+    "dotenv": "17.4.2",
+    "express": "5.2.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}
