@@ -17,6 +17,19 @@ Client --Bearer JWT--> KrakenD :8080 --X-Locci-Tenant--> locci-ai-gateway --> Ng
 | `scripts/` | `fetch-models.sh`, `locci-auth-token.sh`, `smoke.sh` |
 | `models/` | GGUF files (git-ignored) |
 
+## Dev commands
+
+Everything below is wrapped in `.justfile`; run `just` to list the recipes. The usual loop:
+
+```bash
+just auth        # terminal 1: locci-auth on :8787
+just models      # once
+just up          # build, start, wait for healthy
+just chat "Reverse a string in Go"
+just meter       # follow per-tenant usage
+just down
+```
+
 ## Quick start
 
 Auth comes from [locci-auth](../locci-auth) running locally. Its users are the tenants: KrakenD validates the ES256 access token against locci-auth's JWKS and propagates `properties.id` as `X-Locci-Tenant` (and `properties.email` as `X-Locci-Email`).
