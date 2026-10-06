@@ -1,0 +1,41 @@
+{
+  "name": "@locci/ai-sdk",
+  "version": "0.1.0",
+  "description": "Locci AI Gateway provider for the Vercel AI SDK",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/auth.test.ts test/models.test.ts",
+    "test:e2e": "node --import tsx --test test/e2e.test.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.63"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "ai": "^7.0.128",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "zod": "^4.6.5"
+  },
+  "peerDependencies": {
+    "zod": "^3.25.76 || ^4.1.8"
+  }
+}

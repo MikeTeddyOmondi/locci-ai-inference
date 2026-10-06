@@ -16,6 +16,7 @@ Client --Bearer JWT--> KrakenD :8080 --X-Locci-Tenant--> locci-ai-gateway --> Ng
 | `krakend/` | Edge config; validates against locci-auth's JWKS at `host.docker.internal:8787` |
 | `scripts/` | `fetch-models.sh`, `locci-auth-token.sh`, `smoke.sh` |
 | `models/` | GGUF files (git-ignored) |
+| `packages/ai-sdk/` | `@locci/ai-sdk`, the Vercel AI SDK provider for this gateway ([README](packages/ai-sdk/README.md)) |
 
 ## Dev commands
 

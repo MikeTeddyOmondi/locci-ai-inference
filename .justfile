@@ -151,3 +151,27 @@ chat-local prompt="Say hi in five words." tenant="dev-local":
 # Remove build artefacts
 clean:
     rm -rf {{gw}}/bin
+
+# -- @locci/ai-sdk (packages/ai-sdk) ----------------------------------------
+
+sdk := "packages/ai-sdk"
+
+# Install the provider package's dependencies
+sdk-install:
+    cd {{sdk}} && pnpm install
+
+# Typecheck and run the provider's unit tests (auth and model-id drift)
+sdk-test:
+    cd {{sdk}} && pnpm typecheck && pnpm test
+
+# Build the provider to packages/ai-sdk/dist
+sdk-build:
+    cd {{sdk}} && pnpm build
+
+# AI SDK calls through the running stack (needs `just up` and `just auth`)
+sdk-e2e:
+    #!/usr/bin/env sh
+    set -eu
+    export LOCCI_TEST_ACCESS_TOKEN="$(scripts/locci-auth-token.sh)"
+    export LOCCI_AUTH_URL=http://localhost:8787
+    cd {{sdk}} && pnpm test:e2e
