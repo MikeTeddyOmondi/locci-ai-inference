@@ -146,13 +146,21 @@ await check('web protocol: /api/chat UI stream + CORS', async () => {
 
 // --- the CLI binary itself --------------------------------------------------------
 await check('cli ask --json', async () => {
-  const out = execFileSync('pnpm', ['--filter', '@locci/example-cli', 'run', '-s', 'ask', '--json', 'Reply with exactly: pong'], {
-    cwd: root,
-    encoding: 'utf8',
-    env: { ...process.env, API_URL: API },
-  });
+  let out;
+  try {
+    out = execFileSync('pnpm', ['--filter', '@locci/example-cli', 'run', '-s', 'ask', '--json', 'Reply with exactly: pong'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, API_URL: API },
+    });
+  } catch (err) {
+    // `ask` exits 1 on a stream error or an empty answer; its JSON says which.
+    out = String(err.stdout ?? '');
+    if (!out.trim()) throw new Error(`exit ${err.status}: ${String(err.stderr ?? '').trim().slice(0, 200)}`);
+  }
   const r = JSON.parse(out.trim().split('\n').pop());
-  assert(r.ok, `errors: ${r.errors.join('; ')} text: ${JSON.stringify(r.text)}`);
+  const calls = r.tools.map((t) => t.name).join(', ');
+  assert(r.ok, `errors: [${r.errors.join('; ')}] text: ${JSON.stringify(r.text)} tools: [${calls}] finish: ${r.finish}`);
   return JSON.stringify(r.text.trim().slice(0, 40));
 });
 
