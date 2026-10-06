@@ -1,0 +1,153 @@
+{
+  "$schema": "https://www.krakend.io/schema/v2.13/krakend.json",
+  "version": 3,
+  "name": "locci-ai-edge",
+  "port": 8080,
+  "timeout": "600s",
+  "extra_config": {
+    "router": {
+      "return_error_msg": true
+    }
+  },
+  "endpoints": [
+    {
+      "endpoint": "/v1/chat/completions",
+      "method": "POST",
+      "output_encoding": "no-op",
+      "timeout": "600s",
+      "input_headers": [
+        "Content-Type",
+        "Accept",
+        "X-Locci-Tenant",
+        "X-Locci-Email"
+      ],
+      "backend": [
+        {
+          "url_pattern": "/v1/chat/completions",
+          "host": [
+            "http://locci-ai-gateway:8080"
+          ],
+          "encoding": "no-op"
+        }
+      ],
+      "extra_config": {
+        "auth/validator": {
+          "alg": "ES256",
+          "jwk_url": "http://host.docker.internal:8787/.well-known/jwks.json",
+          "issuer": "http://localhost:8787",
+          "cache": true,
+          "cache_duration": 900,
+          "disable_jwk_security": true,
+          "propagate_claims": [
+            [
+              "properties.id",
+              "X-Locci-Tenant"
+            ],
+            [
+              "properties.email",
+              "X-Locci-Email"
+            ]
+          ]
+        },
+        "qos/ratelimit/router": {
+          "max_rate": 100,
+          "client_max_rate": 10,
+          "strategy": "ip"
+        }
+      }
+    },
+    {
+      "endpoint": "/v1/embeddings",
+      "method": "POST",
+      "output_encoding": "no-op",
+      "timeout": "120s",
+      "input_headers": [
+        "Content-Type",
+        "X-Locci-Tenant",
+        "X-Locci-Email"
+      ],
+      "backend": [
+        {
+          "url_pattern": "/v1/embeddings",
+          "host": [
+            "http://locci-ai-gateway:8080"
+          ],
+          "encoding": "no-op"
+        }
+      ],
+      "extra_config": {
+        "auth/validator": {
+          "alg": "ES256",
+          "jwk_url": "http://host.docker.internal:8787/.well-known/jwks.json",
+          "issuer": "http://localhost:8787",
+          "cache": true,
+          "cache_duration": 900,
+          "disable_jwk_security": true,
+          "propagate_claims": [
+            [
+              "properties.id",
+              "X-Locci-Tenant"
+            ],
+            [
+              "properties.email",
+              "X-Locci-Email"
+            ]
+          ]
+        },
+        "qos/ratelimit/router": {
+          "max_rate": 200,
+          "client_max_rate": 20,
+          "strategy": "ip"
+        }
+      }
+    },
+    {
+      "endpoint": "/v1/models",
+      "method": "GET",
+      "output_encoding": "no-op",
+      "backend": [
+        {
+          "url_pattern": "/v1/models",
+          "host": [
+            "http://locci-ai-gateway:8080"
+          ],
+          "encoding": "no-op"
+        }
+      ],
+      "extra_config": {
+        "auth/validator": {
+          "alg": "ES256",
+          "jwk_url": "http://host.docker.internal:8787/.well-known/jwks.json",
+          "issuer": "http://localhost:8787",
+          "cache": true,
+          "cache_duration": 900,
+          "disable_jwk_security": true,
+          "propagate_claims": [
+            [
+              "properties.id",
+              "X-Locci-Tenant"
+            ],
+            [
+              "properties.email",
+              "X-Locci-Email"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "endpoint": "/health",
+      "method": "GET",
+      "output_encoding": "no-op",
+      "backend": [
+        {
+          "url_pattern": "/health",
+          "host": [
+            "http://locci-ai-gateway:8080"
+          ],
+          "encoding": "no-op"
+        }
+      ]
+    }
+  ]
+}

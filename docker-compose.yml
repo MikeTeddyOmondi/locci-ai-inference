@@ -1,0 +1,101 @@
+# Default `docker compose up` runs the coder pool only.
+# Optional pools: `docker compose --profile vision --profile embed up`.
+# GPU: uncomment the `deploy` block on an inference service (needs the
+# NVIDIA Container Toolkit; not available on Docker Desktop for Mac).
+
+x-llama: &llama
+  image: ghcr.io/ggml-org/llama.cpp:server
+  volumes:
+    - ./models:/models:ro
+  networks:
+    - locci-network
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+    interval: 10s
+    timeout: 5s
+    retries: 30
+    start_period: 30s
+  # deploy:
+  #   resources:
+  #     reservations:
+  #       devices:
+  #         - driver: nvidia
+  #           count: 1
+  #           capabilities: [gpu]
+
+services:
+  # 1. The Edge Gateway (public facing)
+  krakend:
+    image: krakend:2.13
+    command: ["run", "-c", "/etc/krakend/krakend.json"]
+    ports:
+      - "8080:8080" # exposed to clients
+    volumes:
+      - ./krakend/krakend.json:/etc/krakend/krakend.json:ro
+    # locci-auth runs on the host (`wrangler dev`, 127.0.0.1:8787). host-gateway
+    # reaches the host's loopback under both Colima and Docker Desktop.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      locci-ai-gateway:
+        condition: service_healthy
+    networks:
+      - locci-network
+
+  # 2. The AI Router + Metering (Locci)
+  locci-ai-gateway:
+    build: ./locci-ai-gateway
+    environment:
+      UPSTREAM_URL: http://nginx:80
+    ports:
+      - "127.0.0.1:8081:8080" # internal debugging only; remove before scaling
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      nginx:
+        condition: service_started
+    networks:
+      - locci-network
+
+  # 3. The Load Balancer
+  nginx:
+    image: nginx:1.29-alpine
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      llama-coder-1:
+        condition: service_healthy
+      llama-coder-2:
+        condition: service_healthy
+    networks:
+      - locci-network
+
+  # 4. Inference: Coder Pool (2 nodes, continuous batching enabled)
+  llama-coder-1:
+    <<: *llama
+    command: ["-m", "/models/${CODER_MODEL:-qwen2.5-coder-1.5b-instruct-q4_k_m.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--cont-batching", "--parallel", "${LLAMA_PARALLEL:-4}"]
+
+  llama-coder-2:
+    <<: *llama
+    command: ["-m", "/models/${CODER_MODEL:-qwen2.5-coder-1.5b-instruct-q4_k_m.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--cont-batching", "--parallel", "${LLAMA_PARALLEL:-4}"]
+
+  # 5. Inference: Vision/OCR Pool (opt-in)
+  llama-vision-1:
+    <<: *llama
+    profiles: ["vision"]
+    command: ["-m", "/models/${VISION_MODEL:-llava-v1.5-7b-q4_k.gguf}", "--mmproj", "/models/${VISION_MMPROJ:-llava-v1.5-7b-mmproj-f16.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "4096"]
+
+  # 6. Inference: Embeddings Pool (opt-in)
+  llama-embed-1:
+    <<: *llama
+    profiles: ["embed"]
+    command: ["-m", "/models/${EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}", "--host", "0.0.0.0", "--port", "8080", "--embedding", "-c", "2048"]
+
+networks:
+  locci-network:
+    name: locci-network
+    driver: bridge
