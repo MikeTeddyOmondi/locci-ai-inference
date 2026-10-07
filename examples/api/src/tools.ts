@@ -74,7 +74,27 @@ function weatherTool(apiKey: string) {
   });
 }
 
-function searchTool(apiKey: string) {
+/**
+ * Scraped markdown, trimmed for a small model's context: images dropped, links
+ * reduced to their text, table rules and runs of whitespace collapsed. Link-heavy
+ * pages (Wikipedia) cost several times more tokens per character before this.
+ */
+function compactMarkdown(md: string): string {
+  return md
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^[\s|:-]+$/gm, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n+/g, '\n')
+    .trim();
+}
+
+function clip(text: string | undefined, max: number): string | undefined {
+  if (!text) return undefined;
+  return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text;
+}
+
+function searchTool(apiKey: string, maxChars: number) {
   const firecrawl = new Firecrawl({ apiKey });
   return tool({
     description:
@@ -84,9 +104,9 @@ function searchTool(apiKey: string) {
       limit: z
         .number()
         .min(1)
-        .max(10)
+        .max(5)
         .default(3)
-        .describe('Number of search results to return (1-10, default 3)'),
+        .describe('Number of search results to return (1-5, default 3)'),
     }),
     execute: async ({ query, limit = 3 }) => {
       const response = (await firecrawl.search(query, {
@@ -98,13 +118,19 @@ function searchTool(apiKey: string) {
         throw new Error('Search failed: unexpected response from Firecrawl');
       }
 
+      // Pages that failed to scrape come back as an error page; skip them.
+      const items = response.web.filter((item) => !/^\s*Error \d{3}\b/.test(item.markdown ?? ''));
+      // One budget shared by all results, so the tool output stays a fixed
+      // share of the model's context however many results come back.
+      const perResult = Math.floor(maxChars / Math.max(items.length, 1));
+
       return {
         query,
-        results: response.web.map((item) => ({
+        results: items.map((item) => ({
           title: item.title ?? item.metadata?.title,
           url: item.url ?? item.metadata?.sourceURL,
-          description: item.description ?? item.metadata?.description,
-          content: item.markdown?.substring(0, 2000), // Limit content length
+          description: clip(compactMarkdown(item.description ?? item.metadata?.description ?? ''), 200),
+          content: clip(item.markdown ? compactMarkdown(item.markdown) : undefined, perResult),
         })),
       };
     },
@@ -124,7 +150,7 @@ export function builtinTools(env = process.env): { tools: ToolSet; report: strin
   }
 
   if (env.FIRECRAWL_API_KEY) {
-    tools.search = searchTool(env.FIRECRAWL_API_KEY);
+    tools.search = searchTool(env.FIRECRAWL_API_KEY, Number(env.SEARCH_MAX_CHARS) || 4000);
     report.push('  ✓ tool search (Firecrawl)');
   } else {
     report.push('  · tool search skipped: FIRECRAWL_API_KEY not set');
