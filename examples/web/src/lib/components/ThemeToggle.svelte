@@ -1,16 +1,13 @@
 <script lang="ts">
-	import { Sun, Moon } from 'lucide-svelte';
-	import { toggleMode, mode } from 'mode-watcher';
+	import { Moon, Sun } from '@lucide/svelte';
+	import { mode, toggleMode } from 'mode-watcher';
+	import IconButton from './IconButton.svelte';
 </script>
 
-<button
-	onclick={toggleMode}
-	class="cursor-pointer rounded-md p-2 text-gray-600 hover:bg-gray-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
-	aria-label="Toggle theme"
->
+<IconButton label={mode.current === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onclick={toggleMode}>
 	{#if mode.current === 'dark'}
-		<Sun class="h-5 w-5" />
+		<Sun />
 	{:else}
-		<Moon class="h-5 w-5" />
+		<Moon />
 	{/if}
-</button>
+</IconButton>

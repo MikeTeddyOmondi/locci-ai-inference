@@ -149,6 +149,14 @@ export async function clearAllConversations(): Promise<void> {
 }
 
 /**
+ * The thread being viewed: the URL's, or a new chat's before a reload (new
+ * chats get their /chats/<id> URL by shallow routing, without a navigation).
+ */
+export function currentThreadId(urlThreadId: string | undefined): string | null {
+	return urlThreadId ?? conversationState.activeThreadId;
+}
+
+/**
  * Get the active thread
  */
 export function getActiveThread(): Thread | undefined {

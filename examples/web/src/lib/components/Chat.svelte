@@ -1,12 +1,23 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { replaceState } from '$app/navigation';
 	import { Chat } from '@ai-sdk/svelte';
-	import ChatMessage from './ChatMessage.svelte';
-	import ChatInput from './ChatInput.svelte';
-	import { conversationState, createConversation, updateConversation } from '$lib/state/conversationState.svelte';
-	import { threadStore } from '$lib/storage/threads';
-	import { apiUrl } from '$lib/config';
 	import { DefaultChatTransport, type UIMessage } from 'ai';
+	import { ArrowDown, Cloud, Code, Globe, MessageCircleDashed, Pencil, RotateCcw } from '@lucide/svelte';
+	import { onMount, tick } from 'svelte';
+	import { brand } from '$lib/brand';
+	import { apiUrl } from '$lib/config';
+	import { conversationState, createConversation } from '$lib/state/conversationState.svelte';
+	import { ui } from '$lib/state/ui.svelte';
+	import { threadStore } from '$lib/storage/threads';
+	import ChatMessage, { ATTACHMENT_RE } from './ChatMessage.svelte';
+	import Composer, { type ComposerSubmit } from './Composer.svelte';
+	import { Button } from '$lib/components/ui/button';
+
+	interface Props {
+		initialThreadId?: string | null;
+	}
+
+	const { initialThreadId = null }: Props = $props();
 
 	// The model call lives in the example API (examples/api), which reaches the
 	// Locci AI Gateway through @locci/ai-sdk; this app only streams from it.
@@ -17,310 +28,248 @@
 		});
 	}
 
-	interface Props {
-		initialThreadId?: string | null;
-	}
-
-	const { initialThreadId = null }: Props = $props();
-
-	let messagesContainer: HTMLDivElement;
+	let chat = $state<Chat | null>(null);
 	let currentThreadId = $state<string | null>(null);
 	let isLoadingThread = $state(true);
-	let previousStatus = $state<string>('ready');
+	let scroller: HTMLDivElement | undefined = $state();
+	let atBottom = $state(true);
 
-	// Chat instance - created after initial messages are loaded
-	let chat = $state<Chat | null>(null);
+	// A temporary chat never touches the thread store.
+	const temporary = ui.temporary;
 
-	// Flag to ensure init only runs once (component remounts on thread switch via {#key})
-	let hasInitialized = false;
-
-	// Initialize on mount - load messages for active thread if any
-	$effect(() => {
-		// Only run once on mount - thread switching is handled by component remount
-		if (hasInitialized) return;
-		hasInitialized = true;
-
-		async function init() {
-			// Use prop if provided, otherwise fall back to state
-			const activeId = initialThreadId ?? conversationState.activeThreadId;
-
-			if (activeId) {
-				isLoadingThread = true;
+	// Load the thread once per mount (thread switches remount via {#key}).
+	onMount(() => {
+		(async () => {
+			const activeId = initialThreadId;
+			if (activeId && !temporary) {
 				try {
-					const result = await threadStore().get(activeId);
-					if (result) {
-						currentThreadId = activeId;
-						// Create chat with loaded messages
-						chat = newChat(result.messages);
-					} else {
-						// Thread not found, create empty chat
-						chat = newChat();
-					}
+					const thread = await threadStore().get(activeId);
+					currentThreadId = thread ? activeId : null;
+					chat = newChat(thread?.messages ?? []);
 				} catch (error) {
 					console.error('Failed to load thread:', error);
 					chat = newChat();
-				} finally {
-					isLoadingThread = false;
 				}
 			} else {
-				// New chat - no messages to load
-				currentThreadId = null;
 				chat = newChat();
-				isLoadingThread = false;
 			}
-		}
-
-		init();
+			isLoadingThread = false;
+			await tick();
+			scrollToBottom('instant');
+		})();
 	});
 
-	// Track message count for change detection
-	let lastSyncedMessageCount = 0;
+	const messages = $derived(chat?.messages ?? []);
+	const status = $derived(chat?.status ?? 'ready');
+	const error = $derived(chat?.error ?? null);
+	const isBusy = $derived(status === 'streaming' || status === 'submitted');
+	const lastAssistantIndex = $derived(messages.findLastIndex((m) => m.role === 'assistant'));
 
-	// Watch for status changes to sync messages when AI finishes
+	// Persist when a reply finishes, and keep the sidebar preview current.
+	let previousStatus = 'ready';
 	$effect(() => {
-		if (!chat) return;
-
-		const status = chat.status;
-		// When transitioning from streaming/submitted to ready, sync messages
-		if (
-			(previousStatus === 'streaming' || previousStatus === 'submitted') &&
-			status === 'ready' &&
-			currentThreadId &&
-			chat.messages.length > 0
-		) {
-			syncMessagesToDb();
-			lastSyncedMessageCount = chat.messages.length;
+		const now = status;
+		if ((previousStatus === 'streaming' || previousStatus === 'submitted') && now !== previousStatus) {
+			void persist();
 		}
-		previousStatus = status;
+		previousStatus = now;
 	});
 
-	// Also sync when message count changes (catches edge cases)
-	$effect(() => {
-		if (!chat || !currentThreadId) return;
-
-		const messageCount = chat.messages.length;
-		// Only sync if we have new messages that haven't been synced
-		if (messageCount > 0 && messageCount !== lastSyncedMessageCount) {
-			// Use a small delay to batch rapid changes
-			const timeout = setTimeout(() => {
-				if (chat && currentThreadId && chat.messages.length > lastSyncedMessageCount) {
-					syncMessagesToDb();
-					lastSyncedMessageCount = chat.messages.length;
-				}
-			}, 500);
-
-			return () => clearTimeout(timeout);
-		}
-	});
-
-	async function syncMessagesToDb() {
-		if (!currentThreadId || !chat) return;
-
+	async function persist() {
+		if (temporary || !currentThreadId || !chat) return;
 		try {
-			await threadStore().syncMessages(currentThreadId, chat.messages as unknown as UIMessage[]);
-
-			// Update thread preview from first user message
-			const firstUserMsg = chat.messages.find((m) => m.role === 'user');
-			if (firstUserMsg) {
-				const textPart = firstUserMsg.parts?.find((p) => p.type === 'text');
-				if (textPart && 'text' in textPart) {
-					await updateConversation(currentThreadId, {
-						preview: textPart.text.substring(0, 100)
-					});
-				}
+			await threadStore().syncMessages(currentThreadId, $state.snapshot(chat.messages) as UIMessage[]);
+			const updated = await threadStore().get(currentThreadId);
+			const i = conversationState.threads.findIndex((t) => t.id === currentThreadId);
+			if (updated && i !== -1) {
+				const { messages: _messages, ...thread } = updated;
+				conversationState.threads[i] = thread;
 			}
-		} catch (error) {
-			console.error('Failed to sync messages:', error);
+		} catch (err) {
+			console.error('Failed to save messages:', err);
 		}
 	}
 
-	async function handleSubmit(content: string) {
-		if (!content.trim() || !chat) return;
+	async function handleSubmit({ text, attachments, webSearch }: ComposerSubmit) {
+		if (!chat) return;
 
+		// Create the thread on the first message, titled after it.
 		let isNewThread = false;
-
-		// Create thread on first message if not already created
-		if (!currentThreadId) {
-			// Create thread with preview only - title defaults to ID (user can edit)
-			// Pass setActive=false to prevent component remount before sending message
-			const thread = await createConversation('', content.substring(0, 100), false);
+		if (!temporary && !currentThreadId) {
+			const title = (text || attachments[0]?.name || 'New chat').replace(/\s+/g, ' ').slice(0, 60);
+			const thread = await createConversation(title, text.slice(0, 100), false);
 			if (thread) {
 				currentThreadId = thread.id;
+				conversationState.activeThreadId = thread.id;
 				isNewThread = true;
 			}
 		}
 
-		// Send the message
-		chat.sendMessage({ text: content });
+		// Attached files go to the model as extra text parts; ChatMessage shows
+		// them as file chips rather than their contents.
+		const parts = [
+			...(text ? [{ type: 'text' as const, text }] : []),
+			...attachments.map((a) => ({
+				type: 'text' as const,
+				text: `<attachment name="${a.name.replaceAll('"', "'")}">\n${a.text}\n</attachment>`
+			}))
+		];
+		chat.sendMessage({ parts }, { body: { webSearch, model: ui.model || undefined } });
 
-		// Small delay to ensure message is added to chat.messages
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		await tick();
+		scrollToBottom();
+		await persist(); // save the user's message immediately
 
-		// Sync immediately after sending to persist user message
-		if (currentThreadId && chat.messages.length > 0) {
-			try {
-				await threadStore().syncMessages(currentThreadId, chat.messages as unknown as UIMessage[]);
-			} catch (error) {
-				console.error('Failed to sync user message:', error);
-			}
-		}
-
-		// Navigate to thread URL after first message (updates URL without remounting)
+		// Shallow routing: the URL becomes the thread's, but this component (and
+		// the reply streaming into it) stays mounted. A reload opens the thread.
 		if (isNewThread && currentThreadId) {
-			goto(`/chats/${currentThreadId}`, { replaceState: true });
-		}
-
-		scrollToBottom();
-	}
-
-	function scrollToBottom() {
-		if (messagesContainer) {
-			setTimeout(() => {
-				messagesContainer.scrollTo({
-					top: messagesContainer.scrollHeight,
-					behavior: 'smooth'
-				});
-			}, 0);
+			replaceState(`/chats/${currentThreadId}`, {});
 		}
 	}
 
-	// Watch for new messages and scroll
+	function regenerate() {
+		chat?.regenerate({ body: { model: ui.model || undefined } });
+	}
+
+	/**
+	 * Edit a sent message in place: replace its text (keeping any attached
+	 * files), drop everything after it, and ask again. The AI SDK does the
+	 * truncation when `messageId` is given; persist() then saves the new history.
+	 */
+	async function editMessage(messageId: string, text: string) {
+		if (!chat) return;
+		const original = chat.messages.find((m) => m.id === messageId);
+		if (!original) return;
+		const attachments = original.parts.filter((p) => p.type === 'text' && ATTACHMENT_RE.test(p.text));
+		chat.sendMessage(
+			{ parts: [{ type: 'text', text }, ...attachments], messageId },
+			{ body: { model: ui.model || undefined } }
+		);
+		await tick();
+		await persist();
+	}
+
+	function scrollToBottom(behavior: ScrollBehavior = 'smooth') {
+		scroller?.scrollTo({ top: scroller.scrollHeight, behavior });
+	}
+
+	function onScroll() {
+		if (!scroller) return;
+		atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+	}
+
+	// Follow the stream while the reader is at the bottom; don't yank them back
+	// if they scrolled up to read.
 	$effect(() => {
-		if (chat && chat.messages.length > 0) {
-			scrollToBottom();
-		}
+		void messages.length;
+		void messages.at(-1)?.parts.length;
+		const last = messages.at(-1)?.parts.at(-1);
+		void (last && 'text' in last ? last.text : '');
+		if (atBottom) scrollToBottom('instant');
 	});
 
-	// Auto-scroll during streaming to keep latest content visible
-	$effect(() => {
-		if (!isStreaming) return;
-
-		// Scroll immediately when streaming starts
-		scrollToBottom();
-
-		// Continue scrolling as content streams in
-		const interval = setInterval(() => {
-			scrollToBottom();
-		}, 100);
-
-		return () => clearInterval(interval);
-	});
-
-	// Derived values for template
-	const messages = $derived(chat?.messages ?? []);
-	const status = $derived(chat?.status ?? 'ready');
-	const error = $derived(chat?.error ?? null);
-	const isStreaming = $derived(status === 'streaming' || status === 'submitted');
-
-	// Find the index of the last user message (for retry functionality)
-	const lastUserMessageIndex = $derived.by(() => {
-		for (let i = messages.length - 1; i >= 0; i--) {
-			if (messages[i].role === 'user') return i;
-		}
-		return -1;
-	});
-
-	// Retry the last user message
-	function handleRetry() {
-		if (!chat || messages.length === 0) return;
-
-		// Find the last user message
-		const lastUserIdx = lastUserMessageIndex;
-		if (lastUserIdx === -1) return;
-
-		const lastUserMessage = messages[lastUserIdx];
-		const textPart = lastUserMessage.parts?.find((p) => p.type === 'text');
-		if (!textPart || !('text' in textPart)) return;
-
-		const content = textPart.text;
-
-		// Recreate chat with messages up to (but not including) the failed user message
-		const previousMessages = messages.slice(0, lastUserIdx);
-		chat = newChat(previousMessages);
-
-		// Small delay to ensure chat is ready, then resend the message
-		setTimeout(() => {
-			if (chat) {
-				chat.sendMessage({ text: content });
-				scrollToBottom();
-			}
-		}, 50);
+	const icons = { cloud: Cloud, globe: Globe, pencil: Pencil, code: Code } as const;
+	function useSuggestion(prompt: string) {
+		void handleSubmit({ text: prompt, attachments: [], webSearch: prompt.toLowerCase().includes('search the web') });
 	}
 </script>
 
-<div class="flex h-full flex-col bg-white dark:bg-black">
-	<!-- Messages Container - pb-20 ensures last message visible above input -->
-	<div bind:this={messagesContainer} class="min-h-0 flex-1 overflow-y-auto bg-gray-50 dark:bg-neutral-950">
-		<div class="mx-auto max-w-3xl p-3 pb-20 md:p-6 md:pb-24">
-			{#if isLoadingThread}
-				<div class="flex h-full items-center justify-center">
-					<p class="text-gray-500 dark:text-neutral-400">Loading conversation...</p>
-				</div>
-			{:else if messages.length === 0}
-				<div class="flex h-full flex-col items-center justify-center px-4 text-center">
-					<div
-						class="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-linear-to-br from-black to-gray-700 dark:from-neutral-700 dark:to-neutral-900 md:h-16 md:w-16"
-					>
-						<span class="text-2xl md:text-3xl">💬</span>
-					</div>
-					<h2 class="text-lg font-semibold text-gray-900 dark:text-white md:text-xl">Start a Conversation</h2>
-					<p class="mt-2 max-w-sm text-sm text-gray-600 dark:text-neutral-400 md:text-base">Ask me anything! I'm here to help.</p>
-				</div>
+{#if isLoadingThread}
+	<div class="flex flex-1 items-center justify-center">
+		<p class="shimmer text-sm text-muted-foreground" role="status">Loading conversation…</p>
+	</div>
+{:else if messages.length === 0}
+	<!-- Empty chat. Desktop: greeting, composer, suggestions centred together.
+	     Phone: greeting in the middle, suggestions and composer at the bottom. -->
+	<div class="flex min-h-0 flex-1 flex-col px-4 pb-safe sm:justify-center sm:pb-[12vh]">
+		<div class="order-1 flex flex-1 flex-col items-center justify-center gap-3 text-center sm:mb-8 sm:flex-none">
+			{#if temporary}
+				<span class="flex size-12 items-center justify-center rounded-full bg-surface-raised">
+					<MessageCircleDashed class="size-6 text-muted-foreground" />
+				</span>
+				<h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">{brand.temporaryGreeting}</h1>
+				<p class="max-w-sm text-sm text-muted-foreground">{brand.temporaryNote}</p>
 			{:else}
-				<div class="flex flex-col gap-6">
-				{#each messages as message, messageIndex (messageIndex)}
+				<h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">{brand.greeting}</h1>
+			{/if}
+		</div>
+
+		<div class="order-3 mx-auto w-full max-w-3xl sm:order-2">
+			<Composer onSubmit={handleSubmit} autofocus />
+		</div>
+
+		{#if !temporary}
+			<ul class="order-2 mx-auto mb-3 grid w-full max-w-3xl gap-1 sm:order-3 sm:mt-4 sm:mb-0 sm:grid-cols-2">
+				{#each brand.suggestions as s (s.label)}
+					{@const Icon = icons[s.icon]}
+					<li>
+						<Button
+							variant="ghost"
+							onclick={() => useSuggestion(s.prompt)}
+							class="h-auto w-full justify-start gap-3 rounded-2xl px-3 py-2.5 text-[15px] font-normal text-muted-foreground hover:bg-secondary hover:text-foreground dark:hover:bg-secondary"
+						>
+							<Icon class="size-5" />
+							<span class="truncate">{s.label}</span>
+						</Button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</div>
+{:else}
+	<div class="relative flex min-h-0 flex-1 flex-col">
+		<div
+			bind:this={scroller}
+			onscroll={onScroll}
+			class="min-h-0 flex-1 scroll-fade overflow-y-auto overscroll-contain scroll-fade-24"
+		>
+			<div class="mx-auto flex w-full max-w-3xl flex-col gap-7 px-4 pt-4 pb-10 sm:pt-8">
+				{#each messages as message, i (message.id)}
 					<ChatMessage
 						{message}
-						showRetry={error !== null && !isStreaming && messageIndex === lastUserMessageIndex}
-						onRetry={handleRetry}
+						streaming={isBusy && i === messages.length - 1}
+						onRegenerate={i === lastAssistantIndex && !isBusy ? regenerate : undefined}
+						onEdit={isBusy ? undefined : (text) => editMessage(message.id, text)}
 					/>
 				{/each}
-				{#if isStreaming}
-					<div class="flex gap-2 md:gap-3">
-						<div
-							class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-black to-gray-700 dark:from-neutral-700 dark:to-neutral-900 md:h-8 md:w-8"
-						>
-							<span class="text-xs font-semibold text-white md:text-sm">A</span>
-						</div>
-						<div class="flex items-center gap-1 rounded-lg bg-gray-200 px-3 py-2 dark:bg-neutral-800 md:px-4">
-							<div class="h-2 w-2 animate-bounce rounded-full bg-gray-500 dark:bg-neutral-500"></div>
-							<div
-								class="animation-delay-200 h-2 w-2 animate-bounce rounded-full bg-gray-500 dark:bg-neutral-500"
-							></div>
-							<div
-								class="animation-delay-400 h-2 w-2 animate-bounce rounded-full bg-gray-500 dark:bg-neutral-500"
-							></div>
-						</div>
-					</div>
+
+				{#if status === 'submitted'}
+					<p class="shimmer py-1 text-[15px] text-muted-foreground" role="status">Thinking…</p>
 				{/if}
-				{#if error && !isStreaming}
-					<div class="flex gap-2 md:gap-3">
-						<div
-							class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30 md:h-8 md:w-8"
-						>
-							<span class="text-xs md:text-sm">⚠️</span>
+
+				{#if error && !isBusy}
+					<div
+						class="flex items-start gap-3 rounded-2xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-700 dark:text-red-300"
+						role="alert"
+					>
+						<div class="min-w-0 flex-1">
+							<p class="font-medium">Couldn't get a response</p>
+							<p class="mt-0.5 break-words opacity-80">{error.message}</p>
 						</div>
-						<div class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300 md:px-4">
-							<p class="font-medium">Failed to get response</p>
-							<p class="mt-1 text-xs opacity-80">Click the retry button on your message to try again.</p>
-						</div>
+						<Button variant="destructive" size="sm" class="shrink-0 rounded-full px-3" onclick={regenerate}>
+							<RotateCcw /> Retry
+						</Button>
 					</div>
 				{/if}
 			</div>
+		</div>
+
+		{#if !atBottom}
+			<Button
+				variant="outline"
+				size="icon-round"
+				class="absolute bottom-36 left-1/2 z-10 -translate-x-1/2 shadow-md"
+				aria-label="Scroll to latest"
+				onclick={() => scrollToBottom()}
+			>
+				<ArrowDown class="size-4" />
+			</Button>
 		{/if}
+
+		<div class="shrink-0 bg-surface px-3 pt-1 pb-safe sm:px-4">
+			<div class="mx-auto w-full max-w-3xl">
+				<Composer onSubmit={handleSubmit} onStop={() => chat?.stop()} busy={isBusy} />
+			</div>
 		</div>
 	</div>
-
-	<!-- Input Area -->
-	<ChatInput onSendMessage={handleSubmit} disabled={isStreaming || isLoadingThread} />
-</div>
-
-<style>
-	:global(.animation-delay-200) {
-		animation-delay: 0.2s;
-	}
-
-	:global(.animation-delay-400) {
-		animation-delay: 0.4s;
-	}
-</style>
+{/if}

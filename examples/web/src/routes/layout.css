@@ -1,16 +1,318 @@
 @import 'tailwindcss';
+/* shadcn-svelte's shared utilities: scroll-fade, shimmer, no-scrollbar and the
+   data-open / data-closed variants the ui components animate with. */
+@import 'shadcn-svelte/tailwind.css';
 @plugin '@tailwindcss/forms';
 @plugin '@tailwindcss/typography';
 
-/* Enable dark mode via class selector */
-@variant dark (&:where(.dark, .dark *));
+@import 'tw-animate-css';
 
-/* Hide scrollbar globally while keeping scroll functionality */
-* {
-	scrollbar-width: none; /* Firefox */
-	-ms-overflow-style: none; /* IE and Edge */
+/* Enable dark mode via class selector (mode-watcher sets .dark on <html>) */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design tokens, in shadcn-svelte's variable names so the components in
+ * $lib/components/ui pick them up. Surfaces are neutral greys so the UI reads
+ * as a calm frame around the conversation; the brand blue is used sparingly
+ * (links, focus rings). Rebrand a clone by changing these, not the components.
+ */
+:root {
+	--radius: 0.75rem;
+	--background: #ffffff;
+	--foreground: #18181b;
+	--card: #ffffff;
+	--card-foreground: #18181b;
+	--popover: #ffffff;
+	--popover-foreground: #18181b;
+	--primary: #18181b;
+	--primary-foreground: #fafafa;
+	--secondary: #f4f4f5;
+	--secondary-foreground: #18181b;
+	--muted: #f4f4f5;
+	--muted-foreground: #71717a;
+	--accent: #ececee;
+	--accent-foreground: #18181b;
+	--destructive: #dc2626;
+	--border: #e4e4e7;
+	--input: #e4e4e7;
+	--ring: #2563eb;
+	--brand: #2563eb;
+	--brand-hover: #1d4ed8;
+
+	/* App-specific surfaces, on top of the shadcn set. */
+	--surface-sunken: #fafafa;
+	--bubble: #f1f1f3;
+	color-scheme: light;
 }
 
-*::-webkit-scrollbar {
-	display: none; /* Chrome, Safari, Opera */
+.dark {
+	--background: #0b0b0c;
+	--foreground: #ececed;
+	--card: #141416;
+	--card-foreground: #ececed;
+	--popover: #1b1b1d;
+	--popover-foreground: #ececed;
+	--primary: #ececed;
+	--primary-foreground: #18181b;
+	--secondary: #1b1b1d;
+	--secondary-foreground: #ececed;
+	--muted: #1b1b1d;
+	--muted-foreground: #a1a1aa;
+	--accent: #26262a;
+	--accent-foreground: #ececed;
+	--destructive: #f87171;
+	--border: #27272a;
+	--input: #303034;
+	--ring: #3b82f6;
+	--brand: #3b82f6;
+	--brand-hover: #60a5fa;
+
+	--surface-sunken: #111113;
+	--bubble: #26262a;
+	color-scheme: dark;
+}
+
+/* Older names used by the app's own components; aliases, not separate values. */
+:root,
+.dark {
+	--surface: var(--background);
+	--surface-raised: var(--secondary);
+	--surface-hover: var(--accent);
+	--text: var(--foreground);
+	--text-muted: var(--muted-foreground);
+}
+
+@theme inline {
+	--font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+	--font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+	--radius-sm: calc(var(--radius) - 4px);
+	--radius-md: calc(var(--radius) - 2px);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 4px);
+
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+	--color-brand: var(--brand);
+	--color-brand-hover: var(--brand-hover);
+}
+
+@layer base {
+	* {
+		@apply border-border outline-ring/50;
+	}
+
+	html,
+	body {
+		height: 100%;
+		-webkit-tap-highlight-color: transparent;
+	}
+
+	body {
+		@apply bg-background text-foreground;
+		/* No rubber-band scroll of the whole page on mobile; panes scroll instead. */
+		overscroll-behavior: none;
+	}
+}
+
+@utility bg-surface {
+	background-color: var(--surface);
+}
+@utility bg-surface-raised {
+	background-color: var(--surface-raised);
+}
+@utility bg-surface-sunken {
+	background-color: var(--surface-sunken);
+}
+@utility bg-surface-hover {
+	background-color: var(--surface-hover);
+}
+@utility bg-bubble {
+	background-color: var(--bubble);
+}
+@utility border-subtle {
+	border-color: var(--border);
+}
+@utility text-fg {
+	color: var(--text);
+}
+
+/* Safe-area padding for notched phones and the iOS home indicator. */
+@utility pb-safe {
+	padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+@utility pt-safe {
+	padding-top: env(safe-area-inset-top);
+}
+
+/* Thin, unobtrusive scrollbars on desktop; native overlay ones on touch. */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: color-mix(in srgb, var(--text-muted) 35%, transparent) transparent;
+}
+
+/* Markdown in assistant replies. */
+.markdown {
+	line-height: 1.7;
+	overflow-wrap: anywhere;
+}
+.markdown > :first-child {
+	margin-top: 0;
+}
+.markdown > :last-child {
+	margin-bottom: 0;
+}
+.markdown p {
+	margin: 0 0 0.85rem;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+	font-weight: 600;
+	line-height: 1.35;
+	margin: 1.4rem 0 0.6rem;
+}
+.markdown h1 {
+	font-size: 1.35rem;
+}
+.markdown h2 {
+	font-size: 1.2rem;
+}
+.markdown h3 {
+	font-size: 1.05rem;
+}
+.markdown ul,
+.markdown ol {
+	margin: 0 0 0.85rem;
+	padding-left: 1.4rem;
+}
+.markdown ul {
+	list-style: disc;
+}
+.markdown ol {
+	list-style: decimal;
+}
+.markdown li {
+	margin: 0.25rem 0;
+}
+.markdown li::marker {
+	color: var(--text-muted);
+}
+.markdown strong {
+	font-weight: 600;
+}
+.markdown a {
+	color: var(--brand);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+.markdown code {
+	font-family: var(--font-mono);
+	font-size: 0.85em;
+	background: var(--surface-raised);
+	border-radius: 0.375rem;
+	padding: 0.1rem 0.35rem;
+}
+.markdown pre {
+	font-family: var(--font-mono);
+	font-size: 0.85rem;
+	line-height: 1.55;
+	background: var(--surface-sunken);
+	border: 1px solid var(--border);
+	border-radius: 0.75rem;
+	padding: 0.85rem 1rem;
+	margin: 0 0 0.85rem;
+	overflow-x: auto;
+}
+
+/* Fenced code: a header with the language and Copy, then the Shiki output.
+   Shiki emits both themes as CSS variables; .dark picks which one shows. */
+.markdown .code-block {
+	border: 1px solid var(--border);
+	border-radius: 0.75rem;
+	background: var(--surface-sunken);
+	margin: 0 0 0.85rem;
+	overflow: hidden;
+}
+.markdown .code-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.35rem 0.5rem 0.35rem 1rem;
+	border-bottom: 1px solid var(--border);
+	font-size: 0.75rem;
+	color: var(--muted-foreground);
+}
+.markdown .code-head button {
+	cursor: pointer;
+	border-radius: 0.5rem;
+	padding: 0.2rem 0.55rem;
+}
+.markdown .code-head button:hover {
+	background: var(--accent);
+	color: var(--foreground);
+}
+.markdown .code-block pre {
+	border: 0;
+	border-radius: 0;
+	margin: 0;
+	background: transparent !important;
+}
+.shiki,
+.shiki span {
+	color: var(--shiki-light);
+}
+.dark .shiki,
+.dark .shiki span {
+	color: var(--shiki-dark);
+}
+.markdown pre code {
+	background: transparent;
+	padding: 0;
+	font-size: inherit;
+}
+.markdown blockquote {
+	border-left: 3px solid var(--border);
+	padding-left: 0.85rem;
+	color: var(--text-muted);
+	margin: 0 0 0.85rem;
+}
+.markdown hr {
+	border: 0;
+	border-top: 1px solid var(--border);
+	margin: 1.25rem 0;
+}
+.markdown table {
+	display: block;
+	overflow-x: auto;
+	border-collapse: collapse;
+	margin: 0 0 0.85rem;
+	font-size: 0.9rem;
+}
+.markdown th,
+.markdown td {
+	border: 1px solid var(--border);
+	padding: 0.45rem 0.65rem;
+	text-align: left;
+}
+.markdown th {
+	background: var(--surface-raised);
+	font-weight: 600;
 }

@@ -1,346 +1,262 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import { Ellipsis, PanelLeft, PanelLeftClose, Pencil, Pin, PinOff, Search, Settings, SquarePen, Trash2, X } from '@lucide/svelte';
+	import { brand } from '$lib/brand';
 	import {
 		conversationState,
+		currentThreadId,
 		deleteConversation,
-		clearAllConversations,
-		loadThreads,
-		updateConversation,
-		toggleStar
+		toggleStar,
+		updateConversation
 	} from '$lib/state/conversationState.svelte';
-	import { newChatModalState } from '$lib/state/newChatModalState.svelte';
-	import Button from './Button.svelte';
-	import { Trash2, Plus, Pencil, Check, X, Star } from 'lucide-svelte';
+	import { startNewChat, toggleSidebarCollapsed, ui } from '$lib/state/ui.svelte';
+	import type { Thread } from '$lib/storage/threads';
+	import Logo from './Logo.svelte';
+	import ConfirmDialog from './ConfirmDialog.svelte';
+	import { Button } from '$lib/components/ui/button';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+	import { Input } from '$lib/components/ui/input';
+	import IconButton from './IconButton.svelte';
 
 	interface Props {
-		onClose?: () => void;
+		/** Desktop icon rail instead of the full panel. */
+		rail?: boolean;
+		/** Inside the mobile drawer: show a close button, close on navigate. */
+		drawer?: boolean;
 	}
 
-	const { onClose }: Props = $props();
+	const { rail = false, drawer = false }: Props = $props();
 
-	// Track which thread is being edited
-	let editingThreadId = $state<string | null>(null);
-	let editingTitle = $state('');
+	let query = $state('');
+	let searching = $state(false);
+	let searchInput: HTMLInputElement | undefined = $state();
+	let editingId = $state<string | null>(null);
+	let editTitle = $state('');
+	let pendingDelete = $state<Thread | null>(null);
+	let confirmOpen = $state(false);
 
-	// Derived: separate starred and unstarred threads
-	const starredThreads = $derived(conversationState.threads.filter((t) => t.starred));
-	const unstarredThreads = $derived(conversationState.threads.filter((t) => !t.starred));
+	const activeId = $derived(currentThreadId(page.params.threadId));
 
-	async function handleToggleStar(e: Event, threadId: string) {
-		e.stopPropagation();
-		await toggleStar(threadId);
+	const filtered = $derived(
+		query.trim()
+			? conversationState.threads.filter((t) =>
+					`${t.title} ${t.preview}`.toLowerCase().includes(query.trim().toLowerCase())
+				)
+			: conversationState.threads
+	);
+	const pinned = $derived(filtered.filter((t) => t.starred));
+	const recent = $derived(filtered.filter((t) => !t.starred));
+
+	function label(t: Thread) {
+		return t.title || t.preview || 'New chat';
 	}
 
-	// Load threads on mount
-	$effect(() => {
-		loadThreads();
-	});
-
-	function handleNewChat() {
-		newChatModalState.open();
+	function newChat() {
+		startNewChat();
+		goto('/');
 	}
 
-	async function handleDeleteConversation(e: Event, threadId: string) {
-		e.stopPropagation();
-		await deleteConversation(threadId);
+	function openSearch() {
+		if (rail) toggleSidebarCollapsed();
+		searching = true;
+		queueMicrotask(() => searchInput?.focus());
 	}
 
-	function handleSelectConversation(threadId: string) {
-		if (editingThreadId === threadId) return; // Don't select while editing
-		// Navigate to thread URL - this will set activeThreadId via the route
-		goto(`/chats/${threadId}`);
-		// Close sidebar on mobile after selecting
-		onClose?.();
+	function startRename(t: Thread) {
+		editingId = t.id;
+		editTitle = label(t);
 	}
 
-	function handleKeyDown(e: KeyboardEvent, threadId: string) {
-		if (editingThreadId === threadId) return;
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			handleSelectConversation(threadId);
-		}
+	async function saveRename() {
+		const id = editingId;
+		editingId = null;
+		const title = editTitle.trim();
+		if (id && title) await updateConversation(id, { title });
 	}
 
-	function startEditing(e: Event, threadId: string, currentTitle: string) {
-		e.stopPropagation();
-		editingThreadId = threadId;
-		editingTitle = currentTitle === 'New Chat' ? '' : currentTitle;
+	function askDelete(t: Thread) {
+		pendingDelete = t;
+		confirmOpen = true;
 	}
 
-	async function saveTitle(e: Event, threadId: string) {
-		e.stopPropagation();
-		const title = editingTitle.trim() || getShortId(threadId);
-		await updateConversation(threadId, { title });
-		editingThreadId = null;
-		editingTitle = '';
+	async function confirmDelete() {
+		const t = pendingDelete;
+		if (!t) return;
+		await deleteConversation(t.id);
+		if (activeId === t.id) newChat();
 	}
 
-	function cancelEditing(e: Event) {
-		e.stopPropagation();
-		editingThreadId = null;
-		editingTitle = '';
+	function closeDrawer() {
+		if (drawer) ui.sidebarOpen = false;
 	}
 
-	function handleEditKeyDown(e: KeyboardEvent, threadId: string) {
-		if (e.key === 'Enter') {
-			e.preventDefault();
-			saveTitle(e, threadId);
-		} else if (e.key === 'Escape') {
-			e.preventDefault();
-			cancelEditing(e);
-		}
-	}
-
-	async function handleClearAll() {
-		if (confirm('Are you sure you want to delete all conversations? This cannot be undone.')) {
-			await clearAllConversations();
-		}
-	}
-
-	function formatDate(date: Date | string): string {
-		const dateObj = typeof date === 'string' ? new Date(date) : date;
-		const now = new Date();
-		const diffMs = now.getTime() - dateObj.getTime();
-		const diffMins = Math.floor(diffMs / 60000);
-		const diffHours = Math.floor(diffMs / 3600000);
-		const diffDays = Math.floor(diffMs / 86400000);
-
-		if (diffMins < 1) return 'just now';
-		if (diffMins < 60) return `${diffMins}m ago`;
-		if (diffHours < 24) return `${diffHours}h ago`;
-		if (diffDays < 7) return `${diffDays}d ago`;
-
-		return dateObj.toLocaleDateString();
-	}
-
-	// Get shortened ID for display (first 8 chars)
-	function getShortId(id: string): string {
-		return id.substring(0, 8);
-	}
-
-	// Get display title - use title if meaningful, otherwise short ID
-	function getDisplayTitle(thread: { id: string; title: string }): string {
-		if (!thread.title || thread.title === 'New Chat') {
-			return getShortId(thread.id);
-		}
-		return thread.title;
+	function focusOnMount(node: HTMLInputElement) {
+		node.focus();
+		node.select();
 	}
 </script>
 
-<div class="flex h-screen w-64 flex-col border-r border-gray-200 bg-white dark:border-neutral-800 dark:bg-black">
-	<!-- Header -->
-	<div class="border-b border-gray-200 px-4 py-4 dark:border-neutral-800">
-		<Button class="w-full" onclick={handleNewChat}>
-			<Plus class="mr-2 h-4 w-4" />
-			New Chat
-		</Button>
-	</div>
-
-	<!-- Conversations List -->
-	<div class="flex-1 overflow-y-auto">
-		{#if conversationState.isLoading}
-			<div class="flex items-center justify-center px-4 py-8">
-				<p class="text-sm text-gray-500 dark:text-neutral-400">Loading...</p>
-			</div>
-		{:else if conversationState.threads.length === 0}
-			<div class="flex items-center justify-center px-4 py-8 text-center">
-				<div>
-					<p class="text-sm text-gray-500 dark:text-neutral-400">No conversations yet</p>
-					<p class="mt-1 text-xs text-gray-400 dark:text-neutral-500">Start a new chat to begin</p>
-				</div>
-			</div>
+{#snippet threadRow(t: Thread)}
+	<li class="group/row relative">
+		{#if editingId === t.id}
+			<Input
+				class="h-9 rounded-xl bg-background"
+				bind:value={editTitle}
+				{@attach focusOnMount}
+				onblur={saveRename}
+				onkeydown={(e) => {
+					if (e.key === 'Enter') saveRename();
+					if (e.key === 'Escape') editingId = null;
+				}}
+				aria-label="Chat title"
+			/>
 		{:else}
-			<div class="p-4">
-				<!-- Starred threads section -->
-				{#if starredThreads.length > 0}
-					<div class="mb-2 flex items-center gap-2 px-2">
-						<Star class="h-3 w-3 fill-yellow-400 text-yellow-400" />
-						<span class="text-xs font-medium text-gray-500 dark:text-neutral-400">Starred</span>
-					</div>
-					<div class="space-y-2">
-						{#each starredThreads as thread (thread.id)}
-							<div
-								role="button"
-								tabindex="0"
-								class="group flex cursor-pointer items-start justify-between gap-2 rounded-lg px-3 py-2 transition-colors {conversationState.activeThreadId ===
-								thread.id
-									? 'bg-gray-100 dark:bg-neutral-800'
-									: 'hover:bg-gray-50 dark:hover:bg-neutral-900'}"
-								onclick={() => handleSelectConversation(thread.id)}
-								onkeydown={(e) => handleKeyDown(e, thread.id)}
-							>
-								<div class="min-w-0 flex-1">
-									{#if editingThreadId === thread.id}
-										<div class="flex items-center gap-1">
-											<input
-												type="text"
-												bind:value={editingTitle}
-												onkeydown={(e) => handleEditKeyDown(e, thread.id)}
-												onclick={(e) => e.stopPropagation()}
-												class="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-black focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-white dark:focus:border-neutral-500"
-												placeholder={getShortId(thread.id)}
-											/>
-											<button
-												class="shrink-0 cursor-pointer rounded p-1 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30"
-												onclick={(e) => saveTitle(e, thread.id)}
-												title="Save"
-											>
-												<Check class="h-3 w-3" />
-											</button>
-											<button
-												class="shrink-0 cursor-pointer rounded p-1 text-gray-400 hover:bg-gray-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
-												onclick={cancelEditing}
-												title="Cancel"
-											>
-												<X class="h-3 w-3" />
-											</button>
-										</div>
-									{:else}
-										<div class="flex items-center gap-1">
-											<h3 class="flex-1 truncate text-sm font-medium text-gray-900 dark:text-white">
-												{getDisplayTitle(thread)}
-											</h3>
-											<button
-												class="shrink-0 cursor-pointer rounded p-1 text-gray-400 opacity-0 transition-opacity hover:bg-gray-200 hover:text-gray-600 group-hover:opacity-100 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-white"
-												onclick={(e) => startEditing(e, thread.id, thread.title)}
-												title="Edit title"
-											>
-												<Pencil class="h-3 w-3" />
-											</button>
-										</div>
-									{/if}
-									<p class="truncate text-xs text-gray-500 dark:text-neutral-400">
-										{thread.preview || 'No messages yet'}
-									</p>
-									<p class="mt-1 text-xs text-gray-400 dark:text-neutral-500">
-										{formatDate(thread.updatedAt)}
-									</p>
-								</div>
-								<div class="flex shrink-0 flex-col gap-1">
-									<button
-										class="cursor-pointer rounded p-1 text-yellow-400 transition-colors hover:bg-yellow-50 dark:hover:bg-yellow-900/30"
-										onclick={(e) => handleToggleStar(e, thread.id)}
-										title="Unstar conversation"
-									>
-										<Star class="h-4 w-4 fill-yellow-400" />
-									</button>
-									<button
-										class="cursor-pointer rounded p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-red-600 dark:text-neutral-500 dark:hover:bg-neutral-800"
-										onclick={(e) => handleDeleteConversation(e, thread.id)}
-										title="Delete conversation"
-									>
-										<Trash2 class="h-4 w-4" />
-									</button>
-								</div>
-							</div>
-						{/each}
-					</div>
-
-					<!-- Separator between starred and unstarred -->
-					{#if unstarredThreads.length > 0}
-						<div class="my-3 border-t border-gray-200 dark:border-neutral-800"></div>
-					{/if}
-				{/if}
-
-				<!-- Unstarred threads section -->
-				{#if unstarredThreads.length > 0}
-					{#if starredThreads.length > 0}
-						<div class="mb-2 px-2">
-							<span class="text-xs font-medium text-gray-500 dark:text-neutral-400">Other</span>
-						</div>
-					{/if}
-					<div class="space-y-2">
-						{#each unstarredThreads as thread (thread.id)}
-							<div
-								role="button"
-								tabindex="0"
-								class="group flex cursor-pointer items-start justify-between gap-2 rounded-lg px-3 py-2 transition-colors {conversationState.activeThreadId ===
-								thread.id
-									? 'bg-gray-100 dark:bg-neutral-800'
-									: 'hover:bg-gray-50 dark:hover:bg-neutral-900'}"
-								onclick={() => handleSelectConversation(thread.id)}
-								onkeydown={(e) => handleKeyDown(e, thread.id)}
-							>
-								<div class="min-w-0 flex-1">
-									{#if editingThreadId === thread.id}
-										<div class="flex items-center gap-1">
-											<input
-												type="text"
-												bind:value={editingTitle}
-												onkeydown={(e) => handleEditKeyDown(e, thread.id)}
-												onclick={(e) => e.stopPropagation()}
-												class="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-black focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-white dark:focus:border-neutral-500"
-												placeholder={getShortId(thread.id)}
-											/>
-											<button
-												class="shrink-0 cursor-pointer rounded p-1 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30"
-												onclick={(e) => saveTitle(e, thread.id)}
-												title="Save"
-											>
-												<Check class="h-3 w-3" />
-											</button>
-											<button
-												class="shrink-0 cursor-pointer rounded p-1 text-gray-400 hover:bg-gray-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
-												onclick={cancelEditing}
-												title="Cancel"
-											>
-												<X class="h-3 w-3" />
-											</button>
-										</div>
-									{:else}
-										<div class="flex items-center gap-1">
-											<h3 class="flex-1 truncate text-sm font-medium text-gray-900 dark:text-white">
-												{getDisplayTitle(thread)}
-											</h3>
-											<button
-												class="shrink-0 cursor-pointer rounded p-1 text-gray-400 opacity-0 transition-opacity hover:bg-gray-200 hover:text-gray-600 group-hover:opacity-100 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-white"
-												onclick={(e) => startEditing(e, thread.id, thread.title)}
-												title="Edit title"
-											>
-												<Pencil class="h-3 w-3" />
-											</button>
-										</div>
-									{/if}
-									<p class="truncate text-xs text-gray-500 dark:text-neutral-400">
-										{thread.preview || 'No messages yet'}
-									</p>
-									<p class="mt-1 text-xs text-gray-400 dark:text-neutral-500">
-										{formatDate(thread.updatedAt)}
-									</p>
-								</div>
-								<div class="flex shrink-0 flex-col gap-1">
-									<button
-										class="cursor-pointer rounded p-1 text-gray-400 opacity-0 transition-opacity hover:bg-yellow-50 hover:text-yellow-400 group-hover:opacity-100 dark:text-neutral-500 dark:hover:bg-yellow-900/30"
-										onclick={(e) => handleToggleStar(e, thread.id)}
-										title="Star conversation"
-									>
-										<Star class="h-4 w-4" />
-									</button>
-									<button
-										class="cursor-pointer rounded p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-red-600 dark:text-neutral-500 dark:hover:bg-neutral-800"
-										onclick={(e) => handleDeleteConversation(e, thread.id)}
-										title="Delete conversation"
-									>
-										<Trash2 class="h-4 w-4" />
-									</button>
-								</div>
-							</div>
-						{/each}
-					</div>
-				{/if}
-			</div>
-		{/if}
-	</div>
-
-	<!-- Footer -->
-	{#if conversationState.threads.length > 0}
-		<div class="border-t border-gray-200 px-4 py-3 dark:border-neutral-800">
-			<button
-				class="w-full cursor-pointer text-center text-xs text-gray-500 transition-colors hover:text-red-600 dark:text-neutral-400"
-				onclick={handleClearAll}
+			<a
+				href={`/chats/${t.id}`}
+				onclick={closeDrawer}
+				class="flex items-center rounded-xl py-2 pr-9 pl-3 text-sm transition-colors {activeId === t.id
+					? 'bg-accent text-accent-foreground'
+					: 'hover:bg-accent'}"
+				aria-current={activeId === t.id ? 'page' : undefined}
 			>
-				Clear all conversations
-			</button>
+				<span class="truncate">{label(t)}</span>
+			</a>
+			<DropdownMenu.Root>
+				<DropdownMenu.Trigger
+					class="absolute top-1/2 right-1 inline-flex size-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg text-muted-foreground opacity-100 hover:bg-background hover:text-foreground data-[state=open]:opacity-100 sm:opacity-0 sm:group-hover/row:opacity-100 sm:focus-visible:opacity-100"
+					aria-label={`Options for ${label(t)}`}
+				>
+					<Ellipsis class="size-4" />
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Content align="start" sideOffset={4} class="min-w-44">
+					<DropdownMenu.Item onSelect={() => toggleStar(t.id)}>
+						{#if t.starred}
+							<PinOff class="text-muted-foreground" /> Unpin
+						{:else}
+							<Pin class="text-muted-foreground" /> Pin
+						{/if}
+					</DropdownMenu.Item>
+					<DropdownMenu.Item onSelect={() => startRename(t)}>
+						<Pencil class="text-muted-foreground" /> Rename
+					</DropdownMenu.Item>
+					<DropdownMenu.Separator />
+					<DropdownMenu.Item variant="destructive" onSelect={() => askDelete(t)}>
+						<Trash2 /> Delete
+					</DropdownMenu.Item>
+				</DropdownMenu.Content>
+			</DropdownMenu.Root>
+		{/if}
+	</li>
+{/snippet}
+
+{#if rail}
+	<!-- Collapsed desktop rail: icons only. -->
+	<nav class="flex h-full w-14 flex-col items-center gap-1 border-r bg-surface-sunken py-3" aria-label="Sidebar">
+		<a href="/" onclick={newChat} class="mb-1 flex size-9 items-center justify-center" aria-label={`${brand.name}, new chat`}>
+			<img src="/favicon-32x32.png" alt="" class="size-7 rounded-md" width="32" height="32" />
+		</a>
+		<IconButton label="Open sidebar" side="right" onclick={toggleSidebarCollapsed}><PanelLeft /></IconButton>
+		<IconButton label="New chat" side="right" onclick={newChat}><SquarePen /></IconButton>
+		<IconButton label="Search chats" side="right" onclick={openSearch}><Search /></IconButton>
+		<IconButton label="Settings" side="right" href="/settings" class="mt-auto"><Settings /></IconButton>
+	</nav>
+{:else}
+	<nav class="flex h-full w-full flex-col bg-surface-sunken pt-safe md:w-72 md:border-r" aria-label="Sidebar">
+		<div class="flex items-center gap-2 px-3 pt-3 pb-2">
+			<a
+				href="/"
+				onclick={newChat}
+				class="flex items-center gap-1.5 rounded-xl px-2 py-1.5 hover:bg-accent"
+				aria-label={`${brand.name}, new chat`}
+			>
+				<Logo class="h-5" />
+				<span class="text-[15px] font-semibold tracking-tight text-muted-foreground">AI</span>
+			</a>
+			{#if drawer}
+				<IconButton label="Close sidebar" class="ml-auto" onclick={() => (ui.sidebarOpen = false)}><X /></IconButton>
+			{:else}
+				<IconButton label="Collapse sidebar" class="ml-auto" onclick={toggleSidebarCollapsed}><PanelLeftClose /></IconButton>
+			{/if}
 		</div>
-	{/if}
-</div>
+
+		<div class="space-y-0.5 px-3">
+			<Button variant="ghost" class="h-9 w-full justify-start gap-3 rounded-xl px-3 text-sm font-normal" onclick={newChat}>
+				<SquarePen class="size-[18px] text-muted-foreground" /> New chat
+			</Button>
+			{#if searching}
+				<div class="relative">
+					<Search class="pointer-events-none absolute top-1/2 left-3 size-[18px] -translate-y-1/2 text-muted-foreground" />
+					<Input
+						bind:ref={searchInput}
+						bind:value={query}
+						placeholder="Search chats"
+						aria-label="Search chats"
+						class="h-9 rounded-xl bg-background pr-9 pl-10"
+						onkeydown={(e) => {
+							if (e.key === 'Escape') {
+								query = '';
+								searching = false;
+							}
+						}}
+					/>
+					<Button
+						variant="subtle"
+						size="icon-xs"
+						class="absolute top-1/2 right-2 -translate-y-1/2 rounded-full"
+						aria-label="Close search"
+						onclick={() => {
+							query = '';
+							searching = false;
+						}}
+					>
+						<X />
+					</Button>
+				</div>
+			{:else}
+				<Button variant="ghost" class="h-9 w-full justify-start gap-3 rounded-xl px-3 text-sm font-normal" onclick={openSearch}>
+					<Search class="size-[18px] text-muted-foreground" /> Search chats
+				</Button>
+			{/if}
+		</div>
+
+		<div class="mt-4 min-h-0 flex-1 scroll-fade overflow-y-auto px-3 pb-3">
+			{#if conversationState.isLoading && conversationState.threads.length === 0}
+				<p class="shimmer px-3 text-sm text-muted-foreground" role="status">Loading…</p>
+			{:else if filtered.length === 0}
+				<p class="px-3 text-sm text-muted-foreground">{query ? 'No chats match.' : 'No chats yet.'}</p>
+			{/if}
+
+			{#if pinned.length > 0}
+				<h2 class="px-3 pt-1 pb-1.5 text-xs font-medium text-muted-foreground">Pinned</h2>
+				<ul class="mb-4 space-y-0.5">
+					{#each pinned as t (t.id)}{@render threadRow(t)}{/each}
+				</ul>
+			{/if}
+			{#if recent.length > 0}
+				<h2 class="px-3 pt-1 pb-1.5 text-xs font-medium text-muted-foreground">Chats</h2>
+				<ul class="space-y-0.5">
+					{#each recent as t (t.id)}{@render threadRow(t)}{/each}
+				</ul>
+			{/if}
+		</div>
+
+		<div class="border-t px-3 pt-2 pb-safe">
+			<Button
+				variant="ghost"
+				href="/settings"
+				onclick={closeDrawer}
+				class="h-9 w-full justify-start gap-3 rounded-xl px-3 text-sm font-normal {page.url.pathname === '/settings' ? 'bg-accent' : ''}"
+			>
+				<Settings class="size-[18px] text-muted-foreground" /> Settings
+			</Button>
+		</div>
+	</nav>
+{/if}
+
+<ConfirmDialog
+	bind:open={confirmOpen}
+	title="Delete chat?"
+	description={`This will delete "${pendingDelete ? label(pendingDelete) : ''}".`}
+	onConfirm={confirmDelete}
+/>

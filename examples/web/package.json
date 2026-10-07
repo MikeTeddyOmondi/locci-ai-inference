@@ -2,7 +2,7 @@
 	"name": "@locci/example-ai-web",
 	"private": true,
 	"version": "0.1.0",
-	"description": "autonomous-chatbot ported as a pure client of the example API (examples/api)",
+	"description": "Locci AI chat UI, a pure client of the example API (examples/api)",
 	"license": "MIT OR Apache-2.0",
 	"type": "module",
 	"scripts": {
@@ -15,14 +15,17 @@
 	},
 	"dependencies": {
 		"@ai-sdk/svelte": "5.0.129",
+		"@lucide/svelte": "1.52.0",
 		"ai": "7.0.129",
+		"bits-ui": "2.19.5",
 		"clsx": "2.1.1",
 		"dompurify": "3.4.16",
 		"localbase": "0.7.7",
-		"lucide-svelte": "0.563.0",
 		"marked": "17.0.1",
 		"mode-watcher": "1.1.0",
-		"tailwind-merge": "3.7.0"
+		"shiki": "4.5.0",
+		"tailwind-merge": "3.7.0",
+		"tailwind-variants": "3.3.1"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-static": "3.0.10",
@@ -32,9 +35,11 @@
 		"@tailwindcss/typography": "0.5.20",
 		"@tailwindcss/vite": "4.3.3",
 		"@types/dompurify": "3.2.0",
+		"shadcn-svelte": "1.7.0",
 		"svelte": "5.57.2",
 		"svelte-check": "4.7.6",
 		"tailwindcss": "4.3.3",
+		"tw-animate-css": "1.4.0",
 		"typescript": "5.9.3",
 		"vite": "7.3.7"
 	}

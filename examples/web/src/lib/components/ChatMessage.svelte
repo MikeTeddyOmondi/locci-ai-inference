@@ -1,251 +1,213 @@
+<script lang="ts" module>
+	/** Attachments travel as text parts wrapped in this tag (see Chat.svelte). */
+	export const ATTACHMENT_RE = /^<attachment name="([^"]*)">\n?([\s\S]*?)\n?<\/attachment>$/;
+</script>
+
 <script lang="ts">
 	import type { UIMessage } from 'ai';
-	import { marked } from 'marked';
-	import DOMPurify from 'dompurify';
-	import { Copy, Check, RotateCcw } from 'lucide-svelte';
+	import { Check, ChevronRight, Copy, FileText, LoaderCircle, Pencil, RotateCcw, TriangleAlert, Wrench } from '@lucide/svelte';
+	import { Button } from '$lib/components/ui/button';
+	import { codeCopy, renderMarkdown } from '$lib/markdown.svelte';
+	import IconButton from './IconButton.svelte';
 
 	interface Props {
 		message: UIMessage;
-		showRetry?: boolean;
-		onRetry?: () => void;
+		/** Streaming into this message right now. */
+		streaming?: boolean;
+		/** Show "regenerate" (the latest assistant reply, or a failed turn). */
+		onRegenerate?: () => void;
+		/** User messages: resend with new text, replacing what came after. Absent while a reply streams. */
+		onEdit?: (text: string) => void;
 	}
 
-	const { message, showRetry = false, onRetry }: Props = $props();
+	const { message, streaming = false, onRegenerate, onEdit }: Props = $props();
 
-	// Use $derived to reactively compute isUser
 	const isUser = $derived(message.role === 'user');
-
-	// State for copy feedback
 	let copied = $state(false);
+	let editing = $state(false);
+	let draft = $state('');
 
-	// Configure marked for safe rendering
-	marked.setOptions({
-		breaks: true,
-		gfm: true
-	});
-
-	// Parse and sanitize markdown for AI responses
-	function parseMarkdown(text: string): string {
-		const html = marked.parse(text) as string;
-		return DOMPurify.sanitize(html);
+	function startEdit() {
+		draft = plainText;
+		editing = true;
 	}
 
-	// Get plain text content from message
-	function getMessageText(): string {
-		return message.parts
-			.filter((part) => part.type === 'text')
-			.map((part) => (part as { type: 'text'; text: string }).text)
-			.join('\n');
+	function saveEdit() {
+		const text = draft.trim();
+		if (!text || !onEdit) return;
+		editing = false;
+		if (text !== plainText.trim()) onEdit(text);
 	}
 
-	// Copy message to clipboard
-	async function copyToClipboard() {
+	function onEditKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			editing = false;
+		}
+		// Enter sends, Shift+Enter adds a line; touch keyboards keep Enter as a
+		// newline. Cmd/Ctrl+Enter always sends.
+		if (e.key !== 'Enter' || e.isComposing) return;
+		const touch = window.matchMedia('(pointer: coarse)').matches;
+		if (e.metaKey || e.ctrlKey || (!e.shiftKey && !touch)) {
+			e.preventDefault();
+			saveEdit();
+		}
+	}
+
+	function focusEnd(node: HTMLTextAreaElement) {
+		node.focus();
+		node.setSelectionRange(node.value.length, node.value.length);
+	}
+
+	type ToolPart = {
+		type: string;
+		state?: string;
+		input?: unknown;
+		output?: unknown;
+		errorText?: string;
+	};
+
+	/** Plain text of the message, without attachments, for copying. */
+	const plainText = $derived(
+		message.parts
+			.filter((p) => p.type === 'text' && !ATTACHMENT_RE.test((p as { text: string }).text))
+			.map((p) => (p as { text: string }).text)
+			.join('\n\n')
+	);
+
+	async function copy() {
 		try {
-			await navigator.clipboard.writeText(getMessageText());
+			await navigator.clipboard.writeText(plainText);
 			copied = true;
-			setTimeout(() => {
-				copied = false;
-			}, 2000);
+			setTimeout(() => (copied = false), 1600);
 		} catch (err) {
-			console.error('Failed to copy:', err);
+			console.error('Copy failed:', err);
+		}
+	}
+
+	function toolName(part: ToolPart) {
+		return part.type.replace(/^tool-/, '').replaceAll('_', ' ');
+	}
+
+	/** A one-line summary for the tools we know, else a generic status. */
+	function toolSummary(part: ToolPart): string {
+		if (part.state === 'output-error') return part.errorText ?? 'failed';
+		if (part.state !== 'output-available') return 'Working…';
+		const out = part.output as Record<string, unknown> | undefined;
+		const weather = out?.weather as { temperature?: string; condition?: string } | undefined;
+		if (weather?.temperature) return `${weather.temperature}, ${weather.condition ?? ''}`.trim();
+		const results = out?.results as unknown[] | undefined;
+		if (Array.isArray(results)) return `${results.length} result${results.length === 1 ? '' : 's'}`;
+		return 'Done';
+	}
+
+	function pretty(value: unknown): string {
+		try {
+			return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+		} catch {
+			return String(value);
 		}
 	}
 </script>
 
-<div class="group mb-2 flex gap-2 md:gap-3" class:justify-end={isUser}>
-	{#if !isUser}
-		<div
-			class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-black to-gray-700 dark:from-neutral-700 dark:to-neutral-900 md:h-8 md:w-8"
-		>
-			<span class="text-xs font-semibold text-white md:text-sm">A</span>
-		</div>
-	{/if}
-	<div class="relative max-w-[85%] md:max-w-[88%]">
-		<div
-			class="rounded-lg px-3 py-2 text-sm md:px-4 {isUser ? 'bg-black text-white' : 'bg-gray-200 text-gray-900 dark:bg-neutral-800 dark:text-white'}"
-		>
-			{#each message.parts as part, index (index)}
-				{#if part.type === 'text'}
-					{#if isUser}
-						<p class="whitespace-pre-wrap">{part.text}</p>
-					{:else}
-						<div class="prose prose-sm prose-gray max-w-none dark:prose-invert">
-							{@html parseMarkdown(part.text)}
-						</div>
-					{/if}
-				{:else if part.type.startsWith('tool-')}
-					{@const toolPart = part as { type: string; state?: string; output?: unknown }}
-					<div class="my-2 rounded bg-gray-100 p-2 text-xs dark:bg-neutral-700">
-						<p class="font-semibold">{part.type.replace('tool-', '')} Tool</p>
-						{#if toolPart.state === 'output-available' && toolPart.output}
-							{@const output = toolPart.output as { weather?: { temperature?: string; condition?: string } }}
-							<p>{output.weather?.temperature} - {output.weather?.condition}</p>
-						{:else}
-							<p class="text-gray-500 dark:text-neutral-400">Processing...</p>
-						{/if}
-					</div>
-				{/if}
-			{/each}
-		</div>
-		<!-- Action buttons -->
-		<div
-			class="absolute -bottom-6 flex gap-1"
-			class:right-0={isUser}
-			class:left-0={!isUser}
-		>
-			{#if showRetry && isUser && onRetry}
-				<button
-					onclick={onRetry}
-					class="cursor-pointer rounded p-1 text-red-400 transition-all hover:bg-red-50 hover:text-red-600 dark:text-red-400 dark:hover:bg-red-900/30 dark:hover:text-red-300"
-					title="Retry message"
-				>
-					<RotateCcw class="h-4 w-4" />
-				</button>
-			{/if}
-			<button
-				onclick={copyToClipboard}
-				class="cursor-pointer rounded p-1 text-gray-400 opacity-0 transition-all hover:bg-gray-100 hover:text-gray-600 group-hover:opacity-100 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-white"
-				title="Copy to clipboard"
-			>
-				{#if copied}
-					<Check class="h-4 w-4 text-green-500" />
-				{:else}
-					<Copy class="h-4 w-4" />
-				{/if}
-			</button>
+{#if isUser && editing}
+	<!-- Editing in place: the bubble becomes a text box with Cancel and Send. -->
+	<div class="ml-auto w-full rounded-3xl bg-bubble p-3 sm:max-w-[85%]">
+		<textarea
+			bind:value={draft}
+			onkeydown={onEditKeydown}
+			aria-label="Edit message"
+			rows="1"
+			class="block max-h-80 min-h-12 w-full resize-none border-0 bg-transparent px-1.5 py-1 text-[15px] leading-relaxed field-sizing-content focus:ring-0"
+			{@attach focusEnd}
+		></textarea>
+		<div class="mt-2 flex justify-end gap-2">
+			<Button variant="outline" class="h-9 rounded-full px-4" onclick={() => (editing = false)}>Cancel</Button>
+			<Button class="h-9 rounded-full px-4" disabled={!draft.trim()} onclick={saveEdit}>Send</Button>
 		</div>
 	</div>
-	{#if isUser}
-		<div
-			class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-gray-800 to-gray-900 md:h-8 md:w-8"
-		>
-			<span class="text-xs font-semibold text-white md:text-sm">U</span>
+{:else if isUser}
+	<div class="group flex flex-col items-end gap-1.5">
+		{#each message.parts as part, i (i)}
+			{#if part.type === 'text'}
+				{@const attachment = part.text.match(ATTACHMENT_RE)}
+				{#if attachment}
+					<div class="flex max-w-[85%] items-center gap-2 rounded-xl border border-subtle bg-surface px-3 py-2 text-sm">
+						<FileText class="size-4 shrink-0 text-muted-foreground" />
+						<span class="truncate">{attachment[1]}</span>
+					</div>
+				{:else if part.text}
+					<div
+						class="max-w-[85%] rounded-3xl bg-bubble px-4 py-2.5 text-[15px] leading-relaxed break-words whitespace-pre-wrap sm:max-w-[75%]"
+					>
+						{part.text}
+					</div>
+				{/if}
+			{/if}
+		{/each}
+		<div class="flex opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+			<IconButton label={copied ? 'Copied' : 'Copy message'} size="icon" class="rounded-full" onclick={copy}>
+				{#if copied}<Check />{:else}<Copy />{/if}
+			</IconButton>
+			{#if onEdit}
+				<IconButton label="Edit message" size="icon" class="rounded-full" onclick={startEdit}>
+					<Pencil />
+				</IconButton>
+			{/if}
 		</div>
-	{/if}
-</div>
+	</div>
+{:else}
+	<div class="group flex flex-col gap-2">
+		{#each message.parts as part, i (i)}
+			{#if part.type === 'text' && part.text}
+				<div class="markdown text-[15px]" {@attach codeCopy}>
+					<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised by DOMPurify -->
+					{@html renderMarkdown(part.text)}
+				</div>
+			{:else if part.type.startsWith('tool-')}
+				{@const tool = part as ToolPart}
+				{@const running = tool.state !== 'output-available' && tool.state !== 'output-error'}
+				<details class="group/tool w-full max-w-full rounded-2xl border border-subtle bg-surface-sunken text-sm sm:max-w-md">
+					<summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 [&::-webkit-details-marker]:hidden">
+						{#if tool.state === 'output-error'}
+							<TriangleAlert class="size-4 shrink-0 text-destructive" />
+						{:else if tool.state === 'output-available'}
+							<Wrench class="size-4 shrink-0 text-muted-foreground" />
+						{:else}
+							<LoaderCircle class="size-4 shrink-0 animate-spin text-muted-foreground" />
+						{/if}
+						<span class={['font-medium capitalize', running && 'shimmer']}>{toolName(tool)}</span>
+						<span class={['min-w-0 truncate text-muted-foreground', running && 'shimmer']}>{toolSummary(tool)}</span>
+						<ChevronRight class="ml-auto size-4 shrink-0 text-muted-foreground transition-transform group-open/tool:rotate-90" />
+					</summary>
+					<div class="space-y-2 border-t border-subtle px-3.5 py-3">
+						{#if tool.input !== undefined}
+							<p class="text-xs font-medium text-muted-foreground">Input</p>
+							<pre class="max-h-48 overflow-auto rounded-lg bg-surface p-2.5 font-mono text-xs">{pretty(tool.input)}</pre>
+						{/if}
+						{#if tool.output !== undefined}
+							<p class="text-xs font-medium text-muted-foreground">Result</p>
+							<pre class="max-h-64 overflow-auto rounded-lg bg-surface p-2.5 font-mono text-xs">{pretty(tool.output)}</pre>
+						{/if}
+						{#if tool.errorText}
+							<p class="text-xs text-destructive">{tool.errorText}</p>
+						{/if}
+					</div>
+				</details>
+			{/if}
+		{/each}
 
-<style>
-	/* Markdown prose styles for AI messages */
-	:global(.prose) {
-		line-height: 1.6;
-	}
-
-	:global(.prose p) {
-		margin-bottom: 0.75rem;
-	}
-
-	:global(.prose p:last-child) {
-		margin-bottom: 0;
-	}
-
-	:global(.prose h1),
-	:global(.prose h2),
-	:global(.prose h3),
-	:global(.prose h4) {
-		font-weight: 600;
-		margin-top: 1rem;
-		margin-bottom: 0.5rem;
-	}
-
-	:global(.prose h1) {
-		font-size: 1.25rem;
-	}
-
-	:global(.prose h2) {
-		font-size: 1.125rem;
-	}
-
-	:global(.prose h3) {
-		font-size: 1rem;
-	}
-
-	:global(.prose ul),
-	:global(.prose ol) {
-		margin-left: 1.25rem;
-		margin-bottom: 0.75rem;
-	}
-
-	:global(.prose ul) {
-		list-style-type: disc;
-	}
-
-	:global(.prose ol) {
-		list-style-type: decimal;
-	}
-
-	:global(.prose li) {
-		margin-bottom: 0.25rem;
-	}
-
-	:global(.prose code) {
-		background-color: rgba(0, 0, 0, 0.1);
-		padding: 0.125rem 0.25rem;
-		border-radius: 0.25rem;
-		font-size: 0.875em;
-		font-family: ui-monospace, monospace;
-	}
-
-	:global(.prose pre) {
-		background-color: #1f2937;
-		color: #e5e7eb;
-		padding: 0.75rem 1rem;
-		border-radius: 0.5rem;
-		overflow-x: auto;
-		margin-bottom: 0.75rem;
-	}
-
-	:global(.prose pre code) {
-		background-color: transparent;
-		padding: 0;
-		color: inherit;
-	}
-
-	:global(.prose blockquote) {
-		border-left: 3px solid #d1d5db;
-		padding-left: 0.75rem;
-		margin-left: 0;
-		margin-bottom: 0.75rem;
-		color: #6b7280;
-		font-style: italic;
-	}
-
-	:global(.prose a) {
-		color: #2563eb;
-		text-decoration: underline;
-	}
-
-	:global(.prose a:hover) {
-		color: #1d4ed8;
-	}
-
-	:global(.prose strong) {
-		font-weight: 600;
-	}
-
-	:global(.prose em) {
-		font-style: italic;
-	}
-
-	:global(.prose hr) {
-		border-top: 1px solid #d1d5db;
-		margin: 1rem 0;
-	}
-
-	:global(.prose table) {
-		width: 100%;
-		border-collapse: collapse;
-		margin-bottom: 0.75rem;
-	}
-
-	:global(.prose th),
-	:global(.prose td) {
-		border: 1px solid #d1d5db;
-		padding: 0.5rem;
-		text-align: left;
-	}
-
-	:global(.prose th) {
-		background-color: #f3f4f6;
-		font-weight: 600;
-	}
-</style>
+		{#if !streaming && plainText}
+			<div class="-ml-2 flex items-center opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+				<IconButton label={copied ? 'Copied' : 'Copy reply'} size="icon" class="rounded-full" onclick={copy}>
+					{#if copied}<Check />{:else}<Copy />{/if}
+				</IconButton>
+				{#if onRegenerate}
+					<IconButton label="Regenerate reply" size="icon" class="rounded-full" onclick={onRegenerate}>
+						<RotateCcw />
+					</IconButton>
+				{/if}
+			</div>
+		{/if}
+	</div>
+{/if}

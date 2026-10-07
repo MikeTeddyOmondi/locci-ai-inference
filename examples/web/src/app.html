@@ -2,7 +2,22 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!-- viewport-fit=cover exposes the safe-area insets (notches, home bar);
+		     interactive-widget=resizes-content makes the on-screen keyboard shrink
+		     the layout instead of covering the composer. -->
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+		/>
+		<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)" />
+		<title>Locci AI</title>
+		<!-- Locci favicons (from locci-platform): a white wordmark tile on black,
+		     legible against light and dark browser chrome. -->
+		<link rel="icon" href="%sveltekit.assets%/favicon.ico" sizes="any" />
+		<link rel="icon" type="image/png" sizes="32x32" href="%sveltekit.assets%/favicon-32x32.png" />
+		<link rel="icon" type="image/png" sizes="16x16" href="%sveltekit.assets%/favicon-16x16.png" />
+		<link rel="apple-touch-icon" sizes="180x180" href="%sveltekit.assets%/apple-touch-icon-180x180.png" />
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

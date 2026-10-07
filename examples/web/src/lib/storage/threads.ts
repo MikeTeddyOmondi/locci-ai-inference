@@ -51,8 +51,18 @@ function textOf(message: UIMessage): string {
 function sortThreads(threads: Thread[]): Thread[] {
 	return threads.sort((a, b) => {
 		if (a.starred !== b.starred) return a.starred ? -1 : 1;
-		return b.updatedAt.localeCompare(a.updatedAt);
+		return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
 	});
+}
+
+/**
+ * A usable thread record. Overlapping Localbase calls (before operations were
+ * queued) could write a stray doc into `threads`; one bad record must not hide
+ * every chat, so the list skips anything that isn't a thread.
+ */
+function isThread(doc: unknown): doc is Thread {
+	const t = doc as Partial<Thread> | null;
+	return !!t && typeof t.id === 'string' && !('messages' in t);
 }
 
 /**
@@ -68,35 +78,63 @@ export class LocalbaseThreadStore implements ThreadStore {
 		this.db.config.debug = false;
 	}
 
-	async list(): Promise<Thread[]> {
-		const threads = ((await this.db.collection('threads').get()) ?? []) as Thread[];
-		return sortThreads(threads);
+	/**
+	 * Localbase keeps query state (collection, doc filter) on the instance, so
+	 * two overlapping calls corrupt each other: a list() racing a get() can come
+	 * back as a single doc. Run every operation one at a time.
+	 */
+	private queue: Promise<unknown> = Promise.resolve();
+	private serial<T>(op: () => Promise<T>): Promise<T> {
+		const run = this.queue.then(op, op);
+		this.queue = run.catch(() => {});
+		return run;
 	}
 
-	async get(id: string): Promise<ThreadWithMessages | null> {
-		const thread = (await this.db.collection('threads').doc({ id }).get()) as Thread | undefined;
-		if (!thread) return null;
-		const doc = (await this.db.collection('messages').doc({ id }).get()) as
-			| { id: string; messages: UIMessage[] }
-			| undefined;
-		return { ...thread, messages: doc?.messages ?? [] };
+	list(): Promise<Thread[]> {
+		return this.serial(async () => {
+			const docs = await this.db.collection('threads').get();
+			const all: unknown[] = Array.isArray(docs) ? docs : [];
+			const threads = all.filter(isThread);
+			if (threads.length !== all.length) {
+				console.warn(`Skipped ${all.length - threads.length} malformed thread record(s)`);
+			}
+			return sortThreads(threads);
+		});
 	}
 
-	async create(data: { title?: string; preview?: string } = {}): Promise<Thread> {
-		const now = new Date().toISOString();
-		const thread: Thread = {
-			id: crypto.randomUUID(),
-			title: data.title ?? '',
-			preview: data.preview ?? '',
-			starred: false,
-			createdAt: now,
-			updatedAt: now
-		};
-		await this.db.collection('threads').add(thread);
-		return thread;
+	get(id: string): Promise<ThreadWithMessages | null> {
+		return this.serial(async () => {
+			const thread = (await this.db.collection('threads').doc({ id }).get()) as Thread | undefined;
+			if (!thread) return null;
+			const doc = (await this.db.collection('messages').doc({ id }).get()) as
+				| { id: string; messages: UIMessage[] }
+				| undefined;
+			return { ...thread, messages: doc?.messages ?? [] };
+		});
 	}
 
-	async update(id: string, patch: ThreadPatch): Promise<Thread | null> {
+	create(data: { title?: string; preview?: string } = {}): Promise<Thread> {
+		return this.serial(async () => {
+			const now = new Date().toISOString();
+			const thread: Thread = {
+				id: crypto.randomUUID(),
+				title: data.title ?? '',
+				preview: data.preview ?? '',
+				starred: false,
+				createdAt: now,
+				updatedAt: now
+			};
+			await this.db.collection('threads').add(thread);
+			return thread;
+		});
+	}
+
+	update(id: string, patch: ThreadPatch): Promise<Thread | null> {
+		return this.serial(() => this.updateUnqueued(id, patch));
+	}
+
+	/** For use inside another queued operation; queueing again would deadlock. */
+	private async updateUnqueued(id: string, patch: ThreadPatch): Promise<Thread | null> {
 		const current = (await this.db.collection('threads').doc({ id }).get()) as Thread | undefined;
 		if (!current) return null;
 		const updated: Thread = { ...current, ...patch, updatedAt: new Date().toISOString() };
@@ -104,25 +142,31 @@ export class LocalbaseThreadStore implements ThreadStore {
 		return updated;
 	}
 
-	async remove(id: string): Promise<void> {
-		await this.db.collection('threads').doc({ id }).delete();
-		await this.db.collection('messages').doc({ id }).delete();
+	remove(id: string): Promise<void> {
+		return this.serial(async () => {
+			await this.db.collection('threads').doc({ id }).delete();
+			await this.db.collection('messages').doc({ id }).delete();
+		});
 	}
 
-	async clear(): Promise<void> {
-		await this.db.collection('threads').delete();
-		await this.db.collection('messages').delete();
+	clear(): Promise<void> {
+		return this.serial(async () => {
+			await this.db.collection('threads').delete();
+			await this.db.collection('messages').delete();
+		});
 	}
 
-	async syncMessages(id: string, messages: UIMessage[]): Promise<void> {
-		// Svelte state proxies can't be stored by IndexedDB's structured clone.
-		const plain = JSON.parse(JSON.stringify(messages)) as UIMessage[];
-		const existing = await this.db.collection('messages').doc({ id }).get();
-		if (existing) await this.db.collection('messages').doc({ id }).set({ id, messages: plain });
-		else await this.db.collection('messages').add({ id, messages: plain });
+	syncMessages(id: string, messages: UIMessage[]): Promise<void> {
+		return this.serial(async () => {
+			// Svelte state proxies can't be stored by IndexedDB's structured clone.
+			const plain = JSON.parse(JSON.stringify(messages)) as UIMessage[];
+			const existing = await this.db.collection('messages').doc({ id }).get();
+			if (existing) await this.db.collection('messages').doc({ id }).set({ id, messages: plain });
+			else await this.db.collection('messages').add({ id, messages: plain });
 
-		const firstUser = plain.find((m) => m.role === 'user');
-		await this.update(id, firstUser ? { preview: textOf(firstUser).substring(0, 100) } : {});
+			const firstUser = plain.find((m) => m.role === 'user');
+			await this.updateUnqueued(id, firstUser ? { preview: textOf(firstUser).substring(0, 100) } : {});
+		});
 	}
 }
 
