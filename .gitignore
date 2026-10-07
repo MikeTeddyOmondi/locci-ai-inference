@@ -11,3 +11,4 @@ examples/api/mcp.json
 examples/api/data/
 examples/web/build/
 examples/web/.svelte-kit/
+__pycache__/
