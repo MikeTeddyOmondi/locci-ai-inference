@@ -1,0 +1,19 @@
+#!/bin/sh
+#
+# Records the commit just made in CHANGELOG.md (Keep a Changelog 1.1.0), under
+# "## [Unreleased]" with its short hash. A commit cannot contain its own hash,
+# so the entry stays in the working tree and goes in with the next commit
+# (pre-commit stages it). See scripts/changelog.sh.
+#
+# Skipped mid-rebase: post-rewrite updates the hashes when it finishes.
+
+git_dir=$(git rev-parse --git-dir)
+[ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ] && exit 0
+
+root=$(git rev-parse --show-toplevel)
+[ -f "$root/CHANGELOG.md" ] || exit 0
+sec=$(sh "$root/scripts/changelog.sh" add HEAD) || exit 0
+[ -n "$sec" ] &&
+	printf 'CHANGELOG.md: recorded %s under %s; it goes in with your next commit.\n' \
+		"$(git rev-parse --short=7 HEAD)" "$sec"
+exit 0

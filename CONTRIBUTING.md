@@ -26,7 +26,7 @@ Start with the [README](README.md); `docs/` has the details.
 
 ```bash
 git clone <this repo> && cd locci-ai-inference
-git config core.hooksPath .githooks   # the commit hooks (done for you by `pnpm install` too)
+git config core.hooksPath .githooks   # the git hooks below (done for you by `pnpm install` too)
 pnpm install                          # workspace: packages/* and examples/*
 just models                           # coder models (~2.3 GB); add --vision / --embed as needed
 just auth                             # terminal 1: locci-auth on :8787
@@ -71,6 +71,28 @@ The hooks in `.githooks/` enforce most of these; a blocked commit tells you why.
 - **Match the surrounding code**: comment density, naming, idiom. Go is `gofmt`ed.
 - **Never commit secrets**: `.env` files, `examples/api/mcp.json` and model files are git-ignored. Each app has a committed `.env.example` instead.
 - **Keep docs honest**: when behaviour, numbers or commands change, update the doc that describes them in the same PR, and say what was measured versus estimated.
+- **Record every change in [CHANGELOG.md](CHANGELOG.md)** (see [Changelog](#changelog)); open work and known gaps go in [BACKLOG.md](BACKLOG.md).
+
+## Changelog
+
+[CHANGELOG.md](CHANGELOG.md) follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/): an `[Unreleased]` section at the top, entries grouped under Added, Changed, Deprecated, Removed, Fixed and Security, and each entry ending with the short hash of its commit.
+
+The hooks keep it complete, so you rarely edit it by hand:
+
+- `post-commit` adds the commit you just made under `[Unreleased]` and tells you which section it went to. A commit cannot contain its own hash, so that entry waits in the working tree and goes in with your next commit.
+
+  The section comes from the subject. Start it with a type to choose (`Added:`, `Changed:`, `Deprecated:`, `Removed:`, `Fixed:`, `Security:`); the tag is dropped from the entry. Otherwise the first verb decides: Add goes to Added, Fix to Fixed, Remove to Removed, anything else to Changed. Start it with `Breaking:` for a breaking change: Keep a Changelog has no Breaking section, so the entry is flagged **Breaking:** under Changed (or Removed, for a removal), and the next release is a major version.
+
+  | Subject | Entry |
+  | --- | --- |
+  | `Add a /v1/models endpoint` | Added |
+  | `Fixed: Stop dropping usage on cancelled streams` | Fixed |
+  | `Breaking: Rename the coder model ids` | Changed, **Breaking:** |
+  | `Breaking: Remove the HS256 dev key` | Removed, **Breaking:** |
+- `pre-commit` adds any commit still missing (for example one made with `--no-verify`), stages `CHANGELOG.md`, and blocks the commit if an earlier commit is unlisted or the format is off.
+- `post-rewrite` points entries at the new hashes after `git commit --amend` or a rebase.
+
+Reword entries or move them between sections freely; only the hash has to stay. `scripts/changelog.sh check` validates the file, `scripts/changelog.sh sync` adds whatever is missing. To cut a release, rename `## [Unreleased]` to `## [x.y.z] - YYYY-MM-DD` and add a fresh `## [Unreleased]` above it.
 
 ## Pull requests
 

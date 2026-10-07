@@ -86,3 +86,30 @@ if [ -n "$pins" ]; then
 	printf 'Deliberate? Commit again with --no-verify.\n\n'
 	exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# CHANGELOG.md lists every earlier commit with its short hash, in Keep a
+# Changelog 1.1.0 format (scripts/changelog.sh).
+#
+# post-commit records each commit after it is made; this adds any that are
+# still missing (say, commits made with hooks off), stages CHANGELOG.md so the
+# entries ride along with this commit, then checks the staged file. Note that
+# staging takes the whole file, including any edits you made to it by hand.
+# Skipped mid-rebase and on the very first commit.
+
+git_dir=$(git rev-parse --git-dir)
+if git rev-parse -q --verify HEAD >/dev/null &&
+	[ ! -d "$git_dir/rebase-merge" ] && [ ! -d "$git_dir/rebase-apply" ]; then
+	root=$(git rev-parse --show-toplevel)
+	if [ ! -f "$root/CHANGELOG.md" ]; then
+		printf '\nCommit blocked: CHANGELOG.md is missing.\n\n'
+		exit 1
+	fi
+	sh "$root/scripts/changelog.sh" sync
+	git add "$root/CHANGELOG.md"
+	if ! sh "$root/scripts/changelog.sh" check --index; then
+		printf '\nCommit blocked: fix CHANGELOG.md (see above), or run scripts/changelog.sh sync.\n'
+		printf 'Deliberate? Commit again with --no-verify.\n\n'
+		exit 1
+	fi
+fi

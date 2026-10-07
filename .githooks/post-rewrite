@@ -1,0 +1,11 @@
+#!/bin/sh
+#
+# After `git commit --amend` or a rebase, points CHANGELOG.md entries at the
+# rewritten commits' new hashes (git passes "old new" pairs on stdin).
+
+root=$(git rev-parse --show-toplevel)
+[ -f "$root/CHANGELOG.md" ] || exit 0
+sh "$root/scripts/changelog.sh" rewrite
+# A rebase also skips post-commit for each replayed commit; catch up.
+[ "$1" = "rebase" ] && sh "$root/scripts/changelog.sh" sync
+exit 0
