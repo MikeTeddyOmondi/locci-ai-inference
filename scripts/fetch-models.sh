@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
-# Download GGUF models into ./models. Coder model always; others opt-in.
-# Usage: scripts/fetch-models.sh [--vision] [--embed]
+# Download GGUF models into ./models. Coder models always; others opt-in.
+# Usage: scripts/fetch-models.sh [--vision] [--embed] [--qwen-candidates | --qwen3-0.6b
+#        --qwen3-4b --qwen3-4b-instruct --qwen3.5-2b --qwen3.5-4b]
+# The --qwen* flags fetch alternatives to Qwen3-1.7B for trials; see docs/SLMS.md.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,6 +38,18 @@ for arg in "$@"; do
     --embed)
       fetch "$HF/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf" \
         nomic-embed-text-v1.5.Q4_K_M.gguf
+      ;;
+    # Qwen candidates for the `qwen3-1.7b` pool (docs/SLMS.md, "Trying a candidate").
+    --qwen3-0.6b) fetch "$HF/ggml-org/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf" Qwen3-0.6B-Q8_0.gguf ;;
+    --qwen3-4b) fetch "$HF/ggml-org/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf" Qwen3-4B-Q4_K_M.gguf ;;
+    --qwen3-4b-instruct)
+      fetch "$HF/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf" \
+        Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+      ;;
+    --qwen3.5-2b) fetch "$HF/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf" Qwen3.5-2B-Q4_K_M.gguf ;;
+    --qwen3.5-4b) fetch "$HF/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf" Qwen3.5-4B-Q4_K_M.gguf ;;
+    --qwen-candidates)
+      "$0" --qwen3-0.6b --qwen3-4b --qwen3-4b-instruct --qwen3.5-2b --qwen3.5-4b
       ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac

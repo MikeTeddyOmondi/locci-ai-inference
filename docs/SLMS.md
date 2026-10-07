@@ -42,15 +42,90 @@ Sizes are approximate Q4_K_M files. "Fits" is for this 7.7 GiB VM with the other
 | **Qwen3-1.7B** (in use) | 1.28 GB | Top sub-2B score (0.960) on a published local tool-calling benchmark. Hermes `<tool_call>` format, which llama.cpp parses. **Running now; passes our checks.** | Yes, two nodes |
 | Qwen2.5-1.5B-Instruct | ~1.1 GB | Measured here: passes the protocol checks but is weak at deciding *when* to call. A baseline, superseded by Qwen3-1.7B. | Yes, two nodes |
 | **LFM2.5-1.2B** (Liquid AI) | ~0.8 GB | Second on the same benchmark (0.920); built for edge and CPU. | Yes, two nodes |
-| **Qwen 3.5 2B / 4B** | ~2 / ~3 GB | Newest Qwen below 27B (Feb to Mar 2026), 262K context, Apache 2.0. 4B is the laptop-class step up. | 2B yes; 4B one node |
+| **Qwen3.5 2B / 4B** | 1.28 / 2.74 GB | Newest Qwen below 27B (Feb to Mar 2026), 262K context, hybrid attention (small KV cache). Downloaded; see below. | 2B yes; 4B one node |
 | **Gemma 4 E2B / E4B** | ~1.5 / ~3 GB | Native function calling, 128K context, multimodal (image, audio). Thinking on by default: tool calls land in `reasoning_content` unless disabled. | E2B yes; E4B one node |
 | **Qwen 3.5 9B** | ~6 GB | Recommended 8 GB-tier pick for tool calling in a mid-2026 guide. | No (GPU box) |
-| **Qwen2.5-Coder-7B** | ~4.7 GB | What `qwen3-1.7b` names. Strong code completion, older tool-calling. | One node only |
+| **Qwen2.5-Coder-7B** | ~4.7 GB | The model the old `qwen-coder-7b` id named. Strong code completion, older tool-calling. | One node only |
 | Phi-4-mini (3.8B), SmolLM3-3B | ~2.5 / ~2 GB | Solid 3 to 4B generalists; worth a look if Qwen or Gemma disappoint. | One to two nodes |
 
 Qwen 3.6 and 3.8 start at 27B and Gemma 4's next size is 12B: GPU territory, not SLMs for this box.
 
-**Next to try:** Qwen 3.5 2B (newer, longer context) against Qwen3-1.7B with the same checks. Memory is the constraint: the four pools already take ~5.8 GiB of 7.7.
+### Qwen candidates: downloaded, not yet tested
+
+`scripts/fetch-models.sh --qwen-candidates` downloads five alternatives to the running Qwen3-1.7B into `models/` (git-ignored; one flag per model is listed in the script). None has been run through the checks yet. Architecture and template facts below come from each file's own metadata (`scripts/gguf-info.py`); memory and speed are estimates until measured.
+
+| Model | File (repo) | Disk | Tool-call format | Thinking | Smoothness |
+| --- | --- | --- | --- | --- | --- |
+| Qwen3-1.7B (running) | `Qwen3-1.7B-Q4_K_M.gguf` (ggml-org) | 1.19 GiB | `<tool_call>` JSON | switchable; we run `--reasoning off` | Measured: passes everything |
+| **Qwen3-4B-Instruct-2507** | `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (unsloth) | 2.33 GiB | `<tool_call>` JSON, same as now | none: a non-thinking model | Drop-in; the most likely upgrade in answer quality and tool judgement |
+| Qwen3-4B | `Qwen3-4B-Q4_K_M.gguf` (ggml-org, official) | 2.33 GiB | `<tool_call>` JSON, same as now | switchable, keep `--reasoning off` | Drop-in |
+| Qwen3-0.6B | `Qwen3-0.6B-Q8_0.gguf` (ggml-org; no Q4_K_M published) | 0.75 GiB | `<tool_call>` JSON, same as now | switchable, keep `--reasoning off` | Drop-in; fastest, weakest (0.880 on the sub-2B tool benchmark vs 0.960 for 1.7B) |
+| **Qwen3.5-2B** | `Qwen3.5-2B-Q4_K_M.gguf` (unsloth) | 1.19 GiB | **XML style**: `<tool_call><function=name><parameter=…>` | switchable, keep `--reasoning off` | Likely, unverified: needs llama.cpp to parse the newer format |
+| Qwen3.5-4B | `Qwen3.5-4B-Q4_K_M.gguf` (unsloth) | 2.55 GiB | XML style, as above | switchable, keep `--reasoning off` | Likely, unverified, as above |
+
+#### Architecture and memory
+
+The KV cache is the per-token memory a request's context costs; it is what decides how many tokens a 7.7 GiB VM can afford. Qwen3.5 is a hybrid: most of its layers use linear attention with a small fixed state, so only a quarter of the layers keep a KV cache.
+
+| Model | Layers (with KV cache) | KV heads × dim | Trained context | KV per token | KV at our 16k (`-c 16384`) | KV at 8k |
+| --- | --- | --- | --- | --- | --- | --- |
+| Qwen3-1.7B (running) | 28 (28) | 8 × 128 | 40,960 | 112 KiB | 1.75 GiB | 0.88 GiB |
+| Qwen3-0.6B | 28 (28) | 8 × 128 | 40,960 | 112 KiB | 1.75 GiB | 0.88 GiB |
+| Qwen3-4B / 4B-Instruct-2507 | 36 (36) | 8 × 128 | 40,960 / 262,144 | 144 KiB | 2.25 GiB | 1.13 GiB |
+| Qwen3.5-2B | 24 (6) | 2 × 256 | 262,144 | 12 KiB | 0.19 GiB | 0.09 GiB |
+| Qwen3.5-4B | 32 (8) | 4 × 256 | 262,144 | 32 KiB | 0.50 GiB | 0.25 GiB |
+
+#### Minimum resources
+
+Peak memory is estimated from the one measured point: Qwen3-1.7B peaks at ~3.8 GiB (`RssAnon`) with our settings (`-c 16384 --parallel 2 --cache-ram 1024`, 8192 tokens per request), and the estimate adds each model's difference in file size and KV cache. "Fits" assumes the rest of the default stack is up (Qwen2.5-Coder ~1.3 GiB, embed, KrakenD, router, nginx, the VM itself: ~2.2 GiB), leaving ~5.5 GiB of the 7.7 GiB VM for this node, or ~4.3 GiB with the vision pool on. Speed scales roughly inversely with parameter count from the measured ~50 tokens/s on 4 vCPUs.
+
+| Model | Disk | Peak RAM, our settings (est.) | Peak RAM at `-c 8192 --parallel 1` (est.) | Fits the 8 GiB Colima VM | Generation on 4 vCPU (est.) |
+| --- | --- | --- | --- | --- | --- |
+| Qwen3-1.7B (running) | 1.2 GiB | 3.8 GiB (measured) | ~2.9 GiB | Yes (measured) | ~50 tokens/s (measured) |
+| Qwen3-0.6B | 0.75 GiB | ~3.3 GiB | ~2.5 GiB | Yes | ~100 tokens/s |
+| Qwen3.5-2B | 1.2 GiB | ~2.2 GiB | ~2.1 GiB | Yes, with the most headroom | ~40 tokens/s |
+| Qwen3.5-4B | 2.6 GiB | ~3.9 GiB | ~3.6 GiB | Yes | ~20 tokens/s |
+| Qwen3-4B / 4B-Instruct-2507 | 2.3 GiB | ~5.4 GiB | ~4.3 GiB | Only with vision off, or at `-c 8192 --parallel 1`, or with Colima at 12 GiB | ~20 tokens/s |
+
+Every candidate needs at least 8192 tokens per request for the examples' 16 tools (their schemas alone are ~2,550 tokens), so don't go below `-c 8192 --parallel 1`.
+
+#### Caveats
+
+- **None are tested here yet.** "Drop-in" means the same template family and tool-call syntax as the running model, not a passed check.
+- **Qwen3.5's tool-call format is new to this stack.** llama.cpp derives its parser from the template, and b11434 is recent, but if `just tools-api` shows calls arriving as text in `content`, the format is not parsed.
+- **Community quants.** Qwen's own Qwen3.5 GGUF repos are gated (they return 401), and the 4B-Instruct-2507 Q4_K_M is also unsloth's; ggml-org publishes the plain Qwen3 files. Pin the file you test.
+- **4B models are slower:** about half the speed of the 1.7B on CPU, so the first tool-calling request (~5,200 prompt tokens) would take roughly 50 s instead of 25.
+- **Thinking:** keep `CODER_REASONING=off` for tool calling with every switchable model. The 4B-Instruct-2507 has no thinking mode, so the flag does nothing there.
+
+#### Trying a candidate
+
+No file edits are needed to try one; the override lasts until the node is recreated without it.
+
+```bash
+just auth && just up                      # locci-auth and the gateway
+scripts/fetch-models.sh --qwen3.5-2b      # if not downloaded yet
+CODER_MODEL=Qwen3.5-2B-Q4_K_M.gguf docker compose up -d --wait llama-coder-1
+
+just tools-api && just tools-sdk          # protocol: forced call, round trip, streaming
+just examples-api                         # terminal 2
+just examples-check                       # the real apps, 16 tools
+docker compose exec llama-coder-1 grep RssAnon /proc/1/status   # memory, after the checks
+
+docker compose up -d --wait llama-coder-1 # back to the configured model
+```
+
+For a 4B Qwen3 on the 8 GiB VM, add `CODER_CTX=8192 CODER_PARALLEL=1` (or stop the vision pool) to the override. Record what you measure (pass/fail, tokens/s, peak `RssAnon`) in this file. To adopt one, set `CODER_MODEL` in `.env`, and rename the `qwen3-1.7b` id in `locci-ai-gateway/main.go` and `packages/ai-sdk/src/models.ts` to match (see "Switching a model").
+
+### Other families (not downloaded)
+
+Different tool-call formats or thinking defaults, so more risk than the Qwen candidates. Sizes are Q4_K_M files on Hugging Face.
+
+| Model | GGUF | Size | Caveats |
+| --- | --- | --- | --- |
+| LFM2.5-1.2B (Liquid AI) | `LiquidAI/LFM2.5-1.2B-Instruct-GGUF` (official) | 0.73 GB | 0.920 on the sub-2B tool benchmark and built for CPU, but Liquid uses its own tool-call format; llama.cpp parsing of it unconfirmed |
+| SmolLM3-3B | `ggml-org/SmolLM3-3B-GGUF` | 1.92 GB | Has a thinking mode to turn off; tool calls through its own template |
+| Gemma 4 E2B | `unsloth/gemma-4-E2B-it-GGUF` | 3.11 GB | Larger than "2B" suggests (multimodal); thinks by default, so tool calls land in `reasoning_content` unless disabled |
+| Phi-4-mini | `unsloth/Phi-4-mini-instruct-GGUF` | 2.49 GB | Community quant only; llama.cpp tool-call support unconfirmed |
 
 ### Document OCR and vision (`vision` pool)
 
