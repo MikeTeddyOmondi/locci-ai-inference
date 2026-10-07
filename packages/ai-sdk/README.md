@@ -66,6 +66,8 @@ On the client use `useChat` from `@ai-sdk/react` or `Chat` from `@ai-sdk/svelte`
 
 `LOCCI_CHAT_MODELS` and `LOCCI_EMBEDDING_MODELS` list the ids; unknown ids still type-check and the gateway answers `400`. `test/models.test.ts` fails if the list drifts from `ModelRegistry` in `locci-ai-gateway/main.go`.
 
+`listModels(settings?)` returns what the gateway serves right now (`GET /v1/models`, same auth as model calls) as `{ id, pool }[]`, for model pickers; it throws on a non-2xx response.
+
 ## Not supported yet
 
 `generateObject` is untested. Tool calling (`just tools-sdk`) and images to `baidu-ocr-vision` work; examples in [docs/SDK_USAGE.md](../../docs/SDK_USAGE.md).

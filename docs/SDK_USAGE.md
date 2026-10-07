@@ -374,6 +374,18 @@ console.log(LOCCI_CHAT_MODELS, LOCCI_EMBEDDING_MODELS, pick);
 | `baidu-ocr-vision` | document OCR (image in, text out) | PaddleOCR-VL 1.6; vision pool off by default |
 | `embedding-nomic` | embeddings | nomic-embed-text v1.5, 768 dimensions |
 
+To ask the gateway what it serves right now (for a model picker), call `listModels()`. It reads `GET /v1/models` with the same settings and auth as model calls:
+
+```ts
+// file: list-models.ts
+import { listModels } from "@locci/ai-sdk";
+
+const models = await listModels(); // [{ id: "qwen3-1.7b", pool: "/coder" }, ...]
+console.log(models.map((m) => m.id));
+```
+
+It throws on a non-2xx response. The example API wraps it as `GET /models` for the web client: [examples/README.md](../examples/README.md#api).
+
 Which models and why: [SLMS.md](SLMS.md). Which id to use for which call (and what a wrong one returns): [README](../README.md#which-model-for-what).
 
 ## Not supported yet

@@ -76,6 +76,33 @@ export function createLocci(settings: LocciProviderSettings = {}): LocciProvider
   });
 }
 
+/** One entry of the gateway's `GET /v1/models`. */
+export interface LocciModelInfo {
+  id: string;
+  /** The gateway pool that serves it, e.g. `/coder`. */
+  pool?: string;
+}
+
+/**
+ * The models the gateway serves right now, from `GET /v1/models`, using the
+ * same auth as model calls. Lets a client offer a model picker without
+ * hard-coding ids.
+ */
+export async function listModels(settings: LocciProviderSettings = {}): Promise<LocciModelInfo[]> {
+  const baseURL = (settings.baseURL ?? env("LOCCI_AI_BASE_URL") ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const authFetch = createAuthFetch({
+    apiKey: settings.apiKey ?? (() => env("LOCCI_API_KEY")),
+    accessToken: settings.accessToken,
+    getAccessToken: settings.getAccessToken,
+    authURL: settings.authURL ?? env("LOCCI_AUTH_URL") ?? DEFAULT_AUTH_URL,
+    fetch: settings.fetch,
+  });
+  const res = await authFetch(`${baseURL}/models`, { headers: settings.headers });
+  if (!res.ok) throw new Error(`GET ${baseURL}/models failed: ${res.status} ${res.statusText}`);
+  const body = (await res.json()) as { data?: LocciModelInfo[] };
+  return (body.data ?? []).map(({ id, pool }) => ({ id, pool }));
+}
+
 /**
  * Default instance, configured from the environment. `LOCCI_API_KEY` is read
  * per request; `LOCCI_AI_BASE_URL` and `LOCCI_AUTH_URL` at import.

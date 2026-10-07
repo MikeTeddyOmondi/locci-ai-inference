@@ -13,6 +13,7 @@ A thin layer over `@ai-sdk/openai-compatible`, since the gateway speaks the Open
 - **Locci's model ids**, typed (`qwen3-1.7b`, `embedding-nomic`, ...), with a test that fails if they drift from the router's `ModelRegistry`.
 - **Auth**: a Locci API key is exchanged at locci-auth's `/keys/token` for a one-hour access token, cached, and refreshed before expiry or after a `401`. Servers can pass a user's access token instead.
 - **Usage**: always requests token usage, so `result.usage` matches what the gateway meters per tenant.
+- **Model listing**: `listModels()` reads the gateway's `GET /v1/models`, for model pickers.
 
 ```ts
 import { locci } from "@locci/ai-sdk";
@@ -23,8 +24,8 @@ const result = streamText({ model: locci("qwen3-1.7b"), prompt: "Reverse a strin
 
 | Path | Contents |
 | --- | --- |
-| `src/` | `index.ts` (provider, `createLocci`, `locci`), `auth.ts` (token exchange and refresh), `models.ts` (model ids) |
-| `test/` | Unit tests (auth, model drift) and an end-to-end test against the running stack |
+| `src/` | `index.ts` (provider, `createLocci`, `locci`, `listModels`), `auth.ts` (token exchange and refresh), `models.ts` (model ids) |
+| `test/` | Unit tests (auth, model drift, model listing) and an end-to-end test against the running stack |
 | `scripts/` | `tool-calls.ts`, a tool-calling check through the gateway |
 
 Not on npm yet (`private: true`); depend on the folder after `just sdk-build`. Full guide: [docs/SDK_USAGE.md](../docs/SDK_USAGE.md); package details: [ai-sdk/README.md](ai-sdk/README.md).
