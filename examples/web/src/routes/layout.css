@@ -111,6 +111,21 @@
 	--color-ring: var(--ring);
 	--color-brand: var(--brand);
 	--color-brand-hover: var(--brand-hover);
+
+	/* Typing indicator: each dot lifts a little and brightens in turn. */
+	--animate-typing: typing 1.2s ease-in-out infinite;
+	@keyframes typing {
+		0%,
+		60%,
+		100% {
+			transform: translateY(0);
+			opacity: 0.35;
+		}
+		30% {
+			transform: translateY(-3px);
+			opacity: 1;
+		}
+	}
 }
 
 @layer base {

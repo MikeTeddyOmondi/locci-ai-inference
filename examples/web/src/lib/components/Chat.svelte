@@ -234,7 +234,15 @@
 				{/each}
 
 				{#if status === 'submitted'}
-					<p class="shimmer py-1 text-[15px] text-muted-foreground" role="status">Thinking…</p>
+					<!-- "Thinking" with the dots as its ellipsis, sitting on the text baseline. -->
+					<p class="flex items-baseline py-1 text-[15px] text-muted-foreground" role="status">
+						<span class="shimmer">Thinking</span>
+						<span class="ml-0.5 inline-flex gap-[3px]" aria-hidden="true">
+							<span class="size-1 animate-typing rounded-full bg-current"></span>
+							<span class="size-1 animate-typing rounded-full bg-current [animation-delay:160ms]"></span>
+							<span class="size-1 animate-typing rounded-full bg-current [animation-delay:320ms]"></span>
+						</span>
+					</p>
 				{/if}
 
 				{#if error && !isBusy}
