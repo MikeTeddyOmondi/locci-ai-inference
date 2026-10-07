@@ -21,9 +21,13 @@ interface FirecrawlSearchResult {
   };
 }
 
+/**
+ * Firecrawl 4.x (its v2 API) returns results under `web`; there is no
+ * `success`/`data` envelope any more. Each item is a plain result, or a scraped
+ * document when `scrapeOptions` asks for content.
+ */
 interface FirecrawlSearchResponse {
-  success: boolean;
-  data: FirecrawlSearchResult[];
+  web?: FirecrawlSearchResult[];
 }
 
 /** autonomous-chatbot's system prompt, used for the web endpoint. */
@@ -90,16 +94,16 @@ function searchTool(apiKey: string) {
         scrapeOptions: { formats: ['markdown'] },
       })) as unknown as FirecrawlSearchResponse;
 
-      if (!response.success || !response.data) {
-        throw new Error('Search failed');
+      if (!Array.isArray(response?.web)) {
+        throw new Error('Search failed: unexpected response from Firecrawl');
       }
 
       return {
         query,
-        results: response.data.map((item) => ({
-          title: item.title,
-          url: item.url,
-          description: item.description,
+        results: response.web.map((item) => ({
+          title: item.title ?? item.metadata?.title,
+          url: item.url ?? item.metadata?.sourceURL,
+          description: item.description ?? item.metadata?.description,
           content: item.markdown?.substring(0, 2000), // Limit content length
         })),
       };

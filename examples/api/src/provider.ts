@@ -1,4 +1,4 @@
-import { createLocci } from '@locci/ai-sdk';
+import { createLocci, listModels, LOCCI_EMBEDDING_MODELS, type LocciProviderSettings } from '@locci/ai-sdk';
 import type { LanguageModel } from 'ai';
 
 // Replaces locci-chat-cli's PROVIDER switch (anthropic / openai / groq): every
@@ -11,6 +11,35 @@ export interface Resolved {
   modelId: string;
   model: LanguageModel;
   baseURL: string;
+  /** Any other gateway model, for clients that let the user pick one. */
+  modelFor: (id: string) => LanguageModel;
+  /** The gateway's chat models, described for a picker. */
+  chatModels: () => Promise<ChatModel[]>;
+}
+
+/** A chat model as the web picker shows it. */
+export interface ChatModel {
+  id: string;
+  description: string;
+  /** Can call tools (weather, search, MCP); otherwise tools are left off. */
+  tools: boolean;
+  /** Needs input the clients can't send yet (images), so not selectable. */
+  disabled?: boolean;
+}
+
+/**
+ * What each gateway model is for. The ids come from the gateway; this only
+ * adds words. A model the gateway adds later still lists, as a plain chat model.
+ */
+const MODEL_INFO: Record<string, Omit<ChatModel, 'id'>> = {
+  'qwen3-1.7b': { description: 'Chat, code and tools', tools: true },
+  'qwen2.5-coder-1.5b': { description: 'Code generation, no tools', tools: false },
+  'baidu-ocr-vision': { description: 'Reads images (photos coming soon)', tools: false, disabled: true },
+};
+
+/** Whether a model may be given tools; unknown ids get none, to be safe. */
+export function supportsTools(id: string): boolean {
+  return MODEL_INFO[id]?.tools ?? false;
 }
 
 /**
@@ -28,12 +57,35 @@ export function resolveModel(): Resolved {
     );
   }
 
-  const locci = createLocci({
+  const settings: LocciProviderSettings = {
     baseURL,
     authURL: process.env.LOCCI_AUTH_URL,
     apiKey: process.env.LOCCI_API_KEY,
     accessToken: process.env.LOCCI_ACCESS_TOKEN,
-  });
+  };
+  const locci = createLocci(settings);
 
-  return { provider: 'locci', modelId, model: locci(modelId), baseURL };
+  // The gateway's list changes only on deploy; cache it for a minute.
+  let cached: { at: number; models: ChatModel[] } | undefined;
+  const embeddings = new Set<string>(LOCCI_EMBEDDING_MODELS);
+  async function chatModels(): Promise<ChatModel[]> {
+    if (cached && Date.now() - cached.at < 60_000) return cached.models;
+    const ids = (await listModels(settings)).map((m) => m.id).filter((id) => !embeddings.has(id));
+    if (!ids.includes(modelId)) ids.unshift(modelId);
+    const models = ids.map((id): ChatModel => ({ id, ...(MODEL_INFO[id] ?? { description: 'Chat', tools: false }) }));
+    // Default first, unavailable last, the rest as the gateway lists them.
+    const rank = (m: ChatModel) => (m.id === modelId ? 0 : m.disabled ? 2 : 1);
+    models.sort((a, b) => rank(a) - rank(b));
+    cached = { at: Date.now(), models };
+    return models;
+  }
+
+  return {
+    provider: 'locci',
+    modelId,
+    model: locci(modelId),
+    baseURL,
+    modelFor: (id) => locci(id),
+    chatModels,
+  };
 }

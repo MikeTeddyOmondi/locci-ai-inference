@@ -2,14 +2,17 @@ import 'dotenv/config';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import {
   convertToModelMessages,
+  createUIMessageStream,
+  generateId,
   generateText,
+  pipeUIMessageStreamToResponse,
   stepCountIs,
   streamText,
   type ModelMessage,
   type ToolSet,
   type UIMessage,
 } from 'ai';
-import { resolveModel } from './provider.js';
+import { resolveModel, supportsTools } from './provider.js';
 import { builtinTools, WEB_SYSTEM_PROMPT } from './tools.js';
 import { LibsqlThreadStore, type ThreadStore } from './threads.js';
 import { onShutdown, installShutdown } from './shutdown.js';
@@ -27,7 +30,7 @@ import { connectMcpServers, hasMcpConfig, mcpConfigPath, type McpServerStatus } 
 const PORT = Number(process.env.PORT ?? 3939);
 
 // Resolve the model once at startup from MODEL / LOCCI_* env vars.
-const { provider, modelId, model, baseURL } = resolveModel();
+const { provider, modelId, model, baseURL, modelFor, chatModels } = resolveModel();
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -117,6 +120,23 @@ const wiring = () => ({
  */
 app.get('/info', (_req, res) => {
   res.json(wiring());
+});
+
+/**
+ * Chat models the gateway serves, for the web model picker. Falls back to the
+ * configured model alone when the gateway can't be listed, so the UI still works.
+ */
+app.get('/models', async (_req, res) => {
+  try {
+    res.json({ default: modelId, models: await chatModels() });
+  } catch (error) {
+    console.error('[models]', describeError(error));
+    res.json({
+      default: modelId,
+      models: [{ id: modelId, description: 'Configured model', tools: supportsTools(modelId) }],
+      error: describeError(error),
+    });
+  }
 });
 
 /**
@@ -292,27 +312,112 @@ app.post('/chat', async (req, res) => {
  * that `Chat` from @ai-sdk/svelte (or useChat) consumes.
  */
 app.post('/api/chat', async (req, res) => {
-  const { messages } = req.body as { messages?: UIMessage[] };
+  const {
+    messages,
+    webSearch,
+    model: requested,
+  } = req.body as { messages?: UIMessage[]; webSearch?: boolean; model?: string };
   if (!Array.isArray(messages)) {
     res.status(400).json({ error: 'Body must be { messages: UIMessage[] }' });
     return;
   }
 
-  const result = streamText({
-    model,
-    system: WEB_SYSTEM_PROMPT,
-    messages: await convertToModelMessages(messages),
-    stopWhen: stepCountIs(5),
-    tools,
-    onError: ({ error }) => console.error('[stream error]', describeError(error)),
-  });
+  // The web model picker. Only ids the gateway lists are accepted, and tools
+  // go only to models that can call them (qwen2.5-coder would print the call
+  // as text instead).
+  let chatModel = model;
+  let chatModelId = modelId;
+  if (requested && requested !== modelId) {
+    const known = await chatModels().catch(() => []);
+    const entry = known.find((m) => m.id === requested && !m.disabled);
+    if (!entry) {
+      res.status(400).json({ error: `Unknown or unavailable model: ${requested}` });
+      return;
+    }
+    chatModel = modelFor(requested);
+    chatModelId = requested;
+  }
+  const chatTools = supportsTools(chatModelId) ? tools : undefined;
 
-  result.pipeUIMessageStreamToResponse(res, {
-    // Surface the real reason in the client's chat.error instead of the
-    // SDK's generic "An error occurred."
+  const modelMessages = await convertToModelMessages(messages);
+  const stream = (history: ModelMessage[]) =>
+    streamText({
+      model: chatModel,
+      system: WEB_SYSTEM_PROMPT,
+      messages: history,
+      stopWhen: stepCountIs(5),
+      tools: chatTools,
+      onError: ({ error }) => console.error('[stream error]', describeError(error)),
+    });
+
+  // The web composer's "Search the web" toggle. Small models don't reliably
+  // make a forced tool call (they skip it, or print the call as text), so the
+  // API runs the search itself, streams it to the UI as a normal tool call,
+  // and hands the model the results to answer from.
+  const search = webSearch === true ? chatTools?.search : undefined;
+  if (!search?.execute) {
+    stream(modelMessages).pipeUIMessageStreamToResponse(res, {
+      // Surface the real reason in the client's chat.error instead of the
+      // SDK's generic "An error occurred."
+      onError: (error) => describeError(error),
+    });
+    return;
+  }
+  const runSearch = search.execute;
+
+  const uiStream = createUIMessageStream({
     onError: (error) => describeError(error),
+    execute: async ({ writer }) => {
+      const toolCallId = generateId();
+      const input = { query: lastUserText(messages).slice(0, 300), limit: 3 };
+      writer.write({ type: 'start' });
+      writer.write({ type: 'start-step' });
+      writer.write({ type: 'tool-input-available', toolCallId, toolName: 'search', input });
+
+      let output: unknown;
+      let errorText: string | undefined;
+      try {
+        output = await runSearch(input as never, { toolCallId, messages: modelMessages, context: undefined });
+        writer.write({ type: 'tool-output-available', toolCallId, output });
+      } catch (error) {
+        errorText = describeError(error);
+        writer.write({ type: 'tool-output-error', toolCallId, errorText });
+      }
+      writer.write({ type: 'finish-step' });
+
+      const history: ModelMessage[] = [
+        ...modelMessages,
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId, toolName: 'search', input }] },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId,
+              toolName: 'search',
+              output:
+                errorText !== undefined
+                  ? { type: 'error-text', value: errorText }
+                  : { type: 'json', value: JSON.parse(JSON.stringify(output ?? null)) },
+            },
+          ],
+        },
+      ];
+      writer.merge(stream(history).toUIMessageStream({ sendStart: false }));
+    },
   });
+  pipeUIMessageStreamToResponse({ response: res, stream: uiStream });
 });
+
+/** The user's latest message as plain text (attached files left out), for a search query. */
+function lastUserText(messages: UIMessage[]): string {
+  const last = [...messages].reverse().find((m) => m.role === 'user');
+  return (last?.parts ?? [])
+    .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && !p.text.startsWith('<attachment '))
+    .map((p) => p.text)
+    .join(' ')
+    .trim();
+}
 
 // --- Thread routes (THREAD_STORE=libsql) -----------------------------------
 const threads = express.Router();
