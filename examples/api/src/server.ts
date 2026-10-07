@@ -13,6 +13,7 @@ import {
   type UIMessage,
 } from 'ai';
 import { resolveModel, supportsTools } from './provider.js';
+import { dropPrintedToolCalls, fitToContext, inlineAttachments } from './context.js';
 import { builtinTools, WEB_SYSTEM_PROMPT } from './tools.js';
 import { LibsqlThreadStore, type ThreadStore } from './threads.js';
 import { onShutdown, installShutdown } from './shutdown.js';
@@ -31,6 +32,17 @@ const PORT = Number(process.env.PORT ?? 3939);
 
 // Resolve the model once at startup from MODEL / LOCCI_* env vars.
 const { provider, modelId, model, baseURL, modelFor, chatModels } = resolveModel();
+
+// Characters of conversation the web endpoint sends the model (see context.ts).
+// 8000 is ~3.2k tokens of code-heavy text, leaving room in an 8192-token window
+// for the ~2.6k-token system prompt and tool schemas, a tool result and the answer.
+const MAX_INPUT_CHARS = Number(process.env.MAX_INPUT_CHARS) || 8000;
+const SEARCH_MAX_CHARS = Number(process.env.SEARCH_MAX_CHARS) || 4000;
+
+// Attachments arrive inline in the message (see inlineAttachments); without
+// this the model reaches for the filesystem tools to "open" them.
+const WEB_PROMPT = `${WEB_SYSTEM_PROMPT}
+			Files and pasted text the user attaches are included in their message in full. Read them there; never use file or directory tools to open an attachment.`;
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -128,7 +140,7 @@ app.get('/info', (_req, res) => {
  */
 app.get('/models', async (_req, res) => {
   try {
-    res.json({ default: modelId, models: await chatModels() });
+    res.json({ default: modelId, models: await chatModels(), maxInputChars: MAX_INPUT_CHARS });
   } catch (error) {
     console.error('[models]', describeError(error));
     res.json({
@@ -339,11 +351,17 @@ app.post('/api/chat', async (req, res) => {
   }
   const chatTools = supportsTools(chatModelId) ? tools : undefined;
 
-  const modelMessages = await convertToModelMessages(messages);
+  // Long pastes and histories are shortened to fit the model's window; the
+  // forced web search needs room for its results too.
+  const search = webSearch === true ? chatTools?.search : undefined;
+  const budget = search ? Math.max(2000, MAX_INPUT_CHARS - SEARCH_MAX_CHARS) : MAX_INPUT_CHARS;
+  const fitted = fitToContext(dropPrintedToolCalls(messages), budget);
+  if (fitted.trimmed) console.log(`  [context] conversation shortened to fit ${budget} characters`);
+  const modelMessages = await convertToModelMessages(inlineAttachments(fitted.messages));
   const stream = (history: ModelMessage[]) =>
     streamText({
       model: chatModel,
-      system: WEB_SYSTEM_PROMPT,
+      system: WEB_PROMPT,
       messages: history,
       stopWhen: stepCountIs(5),
       tools: chatTools,
@@ -354,7 +372,6 @@ app.post('/api/chat', async (req, res) => {
   // make a forced tool call (they skip it, or print the call as text), so the
   // API runs the search itself, streams it to the UI as a normal tool call,
   // and hands the model the results to answer from.
-  const search = webSearch === true ? chatTools?.search : undefined;
   if (!search?.execute) {
     stream(modelMessages).pipeUIMessageStreamToResponse(res, {
       // Surface the real reason in the client's chat.error instead of the
@@ -369,7 +386,7 @@ app.post('/api/chat', async (req, res) => {
     onError: (error) => describeError(error),
     execute: async ({ writer }) => {
       const toolCallId = generateId();
-      const input = { query: lastUserText(messages).slice(0, 300), limit: 3 };
+      const input = { query: lastUserText(fitted.messages).slice(0, 300), limit: 3 };
       writer.write({ type: 'start' });
       writer.write({ type: 'start-step' });
       writer.write({ type: 'tool-input-available', toolCallId, toolName: 'search', input });
