@@ -62,6 +62,8 @@ export const ui = $state({
 	defaultModel: '',
 	/** Chat models the gateway serves, for the composer picker and Settings. */
 	models: [] as ChatModel[],
+	/** How much conversation text the API sends the model; longer input is shortened. */
+	maxInputChars: 0,
 	apiReachable: true
 });
 
@@ -84,8 +86,9 @@ export function selectModel(id: string): void {
 export async function loadApiInfo(): Promise<void> {
 	try {
 		const res = await fetch(`${apiUrl()}/models`);
-		const body = (await res.json()) as { default: string; models: ChatModel[] };
+		const body = (await res.json()) as { default: string; models: ChatModel[]; maxInputChars?: number };
 		ui.defaultModel = body.default;
+		ui.maxInputChars = body.maxInputChars ?? 0;
 		ui.models = body.models;
 		// Keep a saved pick only while the gateway still offers it.
 		const saved = body.models.find((m) => m.id === ui.model && !m.disabled);

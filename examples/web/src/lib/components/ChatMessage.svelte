@@ -5,9 +5,11 @@
 
 <script lang="ts">
 	import type { UIMessage } from 'ai';
-	import { Check, ChevronRight, Copy, FileText, LoaderCircle, Pencil, RotateCcw, TriangleAlert, Wrench } from '@lucide/svelte';
+	import { Check, ChevronRight, Copy, LoaderCircle, Pencil, RotateCcw, TriangleAlert, Wrench } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { codeCopy, renderMarkdown } from '$lib/markdown.svelte';
+	import CollapsibleText from './CollapsibleText.svelte';
+	import FileChip from './FileChip.svelte';
 	import IconButton from './IconButton.svelte';
 
 	interface Props {
@@ -61,6 +63,8 @@
 
 	type ToolPart = {
 		type: string;
+		/** Set on `dynamic-tool` parts (MCP tools), whose type doesn't carry the name. */
+		toolName?: string;
 		state?: string;
 		input?: unknown;
 		output?: unknown;
@@ -86,12 +90,18 @@
 	}
 
 	function toolName(part: ToolPart) {
-		return part.type.replace(/^tool-/, '').replaceAll('_', ' ');
+		return (part.toolName ?? part.type.replace(/^tool-/, '')).replaceAll('_', ' ');
 	}
 
 	/** A one-line summary for the tools we know, else a generic status. */
+	/** Failed, either as an error state or (MCP tools) an `isError` result. */
+	function toolFailed(part: ToolPart): boolean {
+		return part.state === 'output-error' || (part.output as { isError?: boolean } | undefined)?.isError === true;
+	}
+
 	function toolSummary(part: ToolPart): string {
 		if (part.state === 'output-error') return part.errorText ?? 'failed';
+		if (toolFailed(part)) return 'Failed';
 		if (part.state !== 'output-available') return 'Working…';
 		const out = part.output as Record<string, unknown> | undefined;
 		const weather = out?.weather as { temperature?: string; condition?: string } | undefined;
@@ -118,7 +128,7 @@
 			onkeydown={onEditKeydown}
 			aria-label="Edit message"
 			rows="1"
-			class="block max-h-80 min-h-12 w-full resize-none border-0 bg-transparent px-1.5 py-1 text-[15px] leading-relaxed field-sizing-content focus:ring-0"
+			class="block max-h-64 min-h-12 w-full resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-1 text-[15px] leading-relaxed field-sizing-content focus:ring-0"
 			{@attach focusEnd}
 		></textarea>
 		<div class="mt-2 flex justify-end gap-2">
@@ -128,21 +138,20 @@
 	</div>
 {:else if isUser}
 	<div class="group flex flex-col items-end gap-1.5">
+		<!-- Attached files and long pastes first, then the message itself. -->
 		{#each message.parts as part, i (i)}
 			{#if part.type === 'text'}
 				{@const attachment = part.text.match(ATTACHMENT_RE)}
 				{#if attachment}
-					<div class="flex max-w-[85%] items-center gap-2 rounded-xl border border-subtle bg-surface px-3 py-2 text-sm">
-						<FileText class="size-4 shrink-0 text-muted-foreground" />
-						<span class="truncate">{attachment[1]}</span>
-					</div>
-				{:else if part.text}
-					<div
-						class="max-w-[85%] rounded-3xl bg-bubble px-4 py-2.5 text-[15px] leading-relaxed break-words whitespace-pre-wrap sm:max-w-[75%]"
-					>
-						{part.text}
+					<div class="max-w-[85%] min-w-0 sm:max-w-80">
+						<FileChip name={attachment[1]} size={new Blob([attachment[2]]).size} text={attachment[2]} />
 					</div>
 				{/if}
+			{/if}
+		{/each}
+		{#each message.parts as part, i (i)}
+			{#if part.type === 'text' && part.text && !ATTACHMENT_RE.test(part.text)}
+				<CollapsibleText text={part.text} />
 			{/if}
 		{/each}
 		<div class="flex opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
@@ -164,12 +173,12 @@
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised by DOMPurify -->
 					{@html renderMarkdown(part.text)}
 				</div>
-			{:else if part.type.startsWith('tool-')}
+			{:else if part.type.startsWith('tool-') || part.type === 'dynamic-tool'}
 				{@const tool = part as ToolPart}
 				{@const running = tool.state !== 'output-available' && tool.state !== 'output-error'}
 				<details class="group/tool w-full max-w-full rounded-2xl border border-subtle bg-surface-sunken text-sm sm:max-w-md">
 					<summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 [&::-webkit-details-marker]:hidden">
-						{#if tool.state === 'output-error'}
+						{#if toolFailed(tool)}
 							<TriangleAlert class="size-4 shrink-0 text-destructive" />
 						{:else if tool.state === 'output-available'}
 							<Wrench class="size-4 shrink-0 text-muted-foreground" />

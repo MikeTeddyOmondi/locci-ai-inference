@@ -15,13 +15,14 @@
 </script>
 
 <script lang="ts">
-	import { ArrowUp, FileText, Globe, Image, Mic, Paperclip, Plus, Square, X } from '@lucide/svelte';
+	import { ArrowUp, Globe, Image, Mic, Paperclip, Plus, Square, X } from '@lucide/svelte';
 	import { onDestroy } from 'svelte';
 	import { brand } from '$lib/brand';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import { currentModel } from '$lib/state/ui.svelte';
+	import { currentModel, ui } from '$lib/state/ui.svelte';
+	import FileChip from './FileChip.svelte';
 	import IconButton from './IconButton.svelte';
 	import ModelPicker from './ModelPicker.svelte';
 
@@ -40,9 +41,12 @@
 	const TEXT_EXTENSIONS =
 		'.txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.toml,.xml,.html,.css,.js,.mjs,.ts,.tsx,.jsx,.svelte,.py,.go,.rs,.java,.kt,.rb,.php,.c,.h,.cpp,.cs,.sh,.sql,.log,.env.example';
 	const MAX_FILES = 5;
-	const MAX_FILE_BYTES = 200_000;
-	/** Keeps attachments inside the model's per-request window (~8k tokens). */
-	const MAX_TOTAL_CHARS = 20_000;
+	const MAX_FILE_BYTES = 500_000;
+	/** A paste longer than this becomes an attached "Pasted text" file, like a file upload. */
+	const PASTE_AS_FILE_CHARS = 2_000;
+	const PASTE_AS_FILE_LINES = 30;
+	/** The text box grows to ~10 lines, then scrolls inside. */
+	const MAX_HEIGHT = 256;
 
 	let text = $state('');
 	let attachments = $state<Attachment[]>([]);
@@ -61,11 +65,39 @@
 		if (autofocus && textarea && !disabled) textarea.focus({ preventScroll: true });
 	});
 
-	/** Grow with the content up to ~8 lines, then scroll inside. */
+	/** Grow with the content up to ~10 lines, then scroll inside. */
 	function resize() {
 		if (!textarea) return;
 		textarea.style.height = 'auto';
-		textarea.style.height = `${Math.min(textarea.scrollHeight, 208)}px`;
+		textarea.style.height = `${Math.min(textarea.scrollHeight, MAX_HEIGHT)}px`;
+	}
+
+	/**
+	 * The model only reads `ui.maxInputChars` characters of a conversation (the
+	 * API shortens anything longer), so say so up front rather than silently.
+	 */
+	function warnIfLong() {
+		const total = text.length + attachments.reduce((n, a) => n + a.text.length, 0);
+		if (ui.maxInputChars && total > ui.maxInputChars) {
+			flash(`Long text: the model reads about the first ${ui.maxInputChars.toLocaleString()} characters.`);
+		}
+	}
+
+	/** Large pastes become an attachment chip instead of flooding the text box. */
+	function onPaste(e: ClipboardEvent) {
+		const pasted = e.clipboardData?.getData('text/plain') ?? '';
+		const lines = pasted.split('\n').length;
+		if (pasted.length < PASTE_AS_FILE_CHARS && lines < PASTE_AS_FILE_LINES) return;
+		e.preventDefault();
+		if (attachments.length >= MAX_FILES) {
+			flash(`Up to ${MAX_FILES} files per message.`);
+			return;
+		}
+		const looksLikeMarkdown = /^(#{1,6} |```|[-*] |> )/m.test(pasted);
+		const n = attachments.filter((a) => a.name.startsWith('Pasted text')).length + 1;
+		const name = `Pasted text${n > 1 ? ` (${n})` : ''}.${looksLikeMarkdown ? 'md' : 'txt'}`;
+		attachments.push({ id: crypto.randomUUID(), name, size: new Blob([pasted]).size, text: pasted });
+		warnIfLong();
 	}
 
 	$effect(() => {
@@ -104,7 +136,6 @@
 
 	async function addFiles(list: FileList | null) {
 		if (!list) return;
-		let used = attachments.reduce((n, a) => n + a.text.length, 0);
 		for (const file of Array.from(list)) {
 			if (attachments.length >= MAX_FILES) {
 				flash(`Up to ${MAX_FILES} files per message.`);
@@ -114,15 +145,11 @@
 				flash(`${file.name} is too large (max ${Math.round(MAX_FILE_BYTES / 1000)} KB).`);
 				continue;
 			}
-			let content = await file.text();
-			if (used + content.length > MAX_TOTAL_CHARS) {
-				content = content.slice(0, Math.max(0, MAX_TOTAL_CHARS - used));
-				flash(`${file.name} was truncated to fit the model's context.`);
-			}
-			used += content.length;
+			const content = await file.text();
 			attachments.push({ id: crypto.randomUUID(), name: file.name, size: file.size, text: content });
 		}
 		if (fileInput) fileInput.value = '';
+		warnIfLong();
 	}
 
 	function removeAttachment(id: string) {
@@ -211,19 +238,8 @@
 		{#if attachments.length > 0}
 			<ul class="flex flex-wrap gap-2 px-1 pt-1 pb-2" aria-label="Attachments">
 				{#each attachments as file (file.id)}
-					<li class="flex max-w-full items-center gap-2 rounded-xl border bg-background py-1.5 pr-1.5 pl-2.5 text-xs">
-						<FileText class="size-4 shrink-0 text-muted-foreground" />
-						<span class="truncate font-medium">{file.name}</span>
-						<span class="shrink-0 text-muted-foreground">{(file.size / 1000).toFixed(1)} KB</span>
-						<Button
-							variant="subtle"
-							size="icon-xs"
-							class="rounded-full"
-							aria-label={`Remove ${file.name}`}
-							onclick={() => removeAttachment(file.id)}
-						>
-							<X />
-						</Button>
+					<li class="max-w-full min-w-0 sm:max-w-72">
+						<FileChip name={file.name} size={file.size} text={file.text} onRemove={() => removeAttachment(file.id)} />
 					</li>
 				{/each}
 			</ul>
@@ -236,11 +252,12 @@
 				bind:this={textarea}
 				bind:value={text}
 				onkeydown={onKeydown}
+				onpaste={onPaste}
 				rows="1"
 				placeholder={brand.placeholder}
 				aria-label="Message"
 				{disabled}
-				class="order-1 max-h-52 min-h-10 basis-full resize-none border-0 bg-transparent px-2 py-2 text-base leading-6 text-foreground placeholder:text-muted-foreground focus:ring-0"
+				class="order-1 max-h-64 min-h-10 overflow-y-auto basis-full resize-none border-0 bg-transparent px-2 py-2 text-base leading-6 text-foreground placeholder:text-muted-foreground focus:ring-0"
 			></textarea>
 
 			<div class="order-2 flex min-w-0 items-center gap-1">
