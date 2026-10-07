@@ -237,7 +237,7 @@
 					<!-- "Thinking" with the dots as its ellipsis, sitting on the text baseline. -->
 					<p class="flex items-baseline py-1 text-[15px] text-muted-foreground" role="status">
 						<span class="shimmer">Thinking</span>
-						<span class="ml-0.5 inline-flex gap-[3px]" aria-hidden="true">
+						<span class="ml-0.5 inline-flex gap-0.75" aria-hidden="true">
 							<span class="size-1 animate-typing rounded-full bg-current"></span>
 							<span class="size-1 animate-typing rounded-full bg-current [animation-delay:160ms]"></span>
 							<span class="size-1 animate-typing rounded-full bg-current [animation-delay:320ms]"></span>
@@ -252,7 +252,7 @@
 					>
 						<div class="min-w-0 flex-1">
 							<p class="font-medium">Couldn't get a response</p>
-							<p class="mt-0.5 break-words opacity-80">{error.message}</p>
+							<p class="mt-0.5 wrap-break-word opacity-80">{error.message}</p>
 						</div>
 						<Button variant="destructive" size="sm" class="shrink-0 rounded-full px-3" onclick={regenerate}>
 							<RotateCcw /> Retry
