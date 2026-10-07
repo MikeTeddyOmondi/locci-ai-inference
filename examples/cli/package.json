@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "locci-chat-cli ported as a pure client of the example API (examples/api)",
+  "license": "MIT OR Apache-2.0",
   "type": "module",
   "bin": {
     "locci-chat": "./src/cli.ts"

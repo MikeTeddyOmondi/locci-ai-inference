@@ -2,7 +2,7 @@
   "name": "@locci/ai-sdk",
   "version": "0.1.0",
   "description": "Locci AI Gateway provider for the Vercel AI SDK",
-  "license": "UNLICENSED",
+  "license": "MIT OR Apache-2.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",

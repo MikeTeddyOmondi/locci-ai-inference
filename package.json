@@ -8,5 +8,6 @@
   },
   "scripts": {
     "prepare": "git config core.hooksPath .githooks || true"
-  }
+  },
+  "license": "MIT OR Apache-2.0"
 }

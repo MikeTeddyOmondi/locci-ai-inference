@@ -153,3 +153,11 @@ Remaining gap: if a valid token lacks `properties.id`, nothing overwrites the he
 - OCR on CPU takes minutes per page: the vision pool wants a GPU before real traffic.
 - KrakenD fetches the JWKS over plain HTTP (`disable_jwk_security`) and has no TLS. Production should use `https://auth.locci.cloud` as both `issuer` and JWKS origin, with `disable_jwk_security: false` and TLS.
 - `LogSink` only logs. Implement `MeterSink` (Postgres, Redis, NATS) and the quota check at the marked hook in `proxyHandler`.
+
+## Contributing, security and conduct
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the checks each change needs and the repo's conventions; [SECURITY.md](SECURITY.md) to report a vulnerability privately; and the [Code of Conduct](CODE_OF_CONDUCT.md) (Mozilla's Community Participation Guidelines).
+
+## License
+
+Dual-licensed under either of [Apache License, Version 2.0](APACHE_LICENSE.md) or [MIT](MIT_LICENSE.md), at your option. Contributions are accepted under the same terms (see [CONTRIBUTING.md](CONTRIBUTING.md#license)).
