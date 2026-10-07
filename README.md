@@ -156,7 +156,7 @@ Remaining gap: if a valid token lacks `properties.id`, nothing overwrites the he
 
 ## Contributing, security and conduct
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the checks each change needs and the repo's conventions; [SECURITY.md](SECURITY.md) to report a vulnerability privately; and the [Code of Conduct](CODE_OF_CONDUCT.md) (Mozilla's Community Participation Guidelines).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the checks each change needs and the repo's conventions; [SECURITY.md](SECURITY.md) to report a vulnerability privately ([hi@mt0.dev](mailto:hi@mt0.dev)); and the [Code of Conduct](CODE_OF_CONDUCT.md) (Mozilla's Community Participation Guidelines).
 
 ## License
 

@@ -21,8 +21,10 @@ Out of scope, report upstream: llama.cpp / `llama-server`, KrakenD, nginx, locci
 
 **Do not open a public issue.**
 
-- If the repository is on GitHub, use **private vulnerability reporting**: the repository's *Security* tab, then *Report a vulnerability*.
-- Otherwise, contact the maintainer, [MikeTeddyOmondi](https://github.com/MikeTeddyOmondi), privately and ask for a secure channel before sending details.
+- Email **[hi@mt0.dev](mailto:hi@mt0.dev)** with "Security" in the subject.
+- Or, if the repository is on GitHub, use **private vulnerability reporting**: the repository's *Security* tab, then *Report a vulnerability*.
+
+If the details are sensitive (a working exploit, a leaked key), say so in a first short email and ask for a secure channel before sending them.
 
 Include:
 

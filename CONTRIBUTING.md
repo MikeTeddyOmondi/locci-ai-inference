@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping with the Locci AI Gateway. This guide covers setting up the stack, the checks each kind of change needs, and the conventions the git hooks enforce. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md); security issues go through [SECURITY.md](SECURITY.md), not public issues.
+Thanks for helping with the Locci AI Gateway. This guide covers setting up the stack, the checks each kind of change needs, and the conventions the git hooks enforce. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md); security issues go through [SECURITY.md](SECURITY.md) (email [hi@mt0.dev](mailto:hi@mt0.dev)), not public issues.
 
 ## What's here
 
