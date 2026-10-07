@@ -25,6 +25,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Add listModels to @locci/ai-sdk for model pickers (`2f01802`)
 - Let the example API serve /models, pick a model per chat and run web search itself (`5dae9aa`)
 - Turn long pastes into previewable files and collapse long messages in the web UI (`267f914`)
+- Add a Keep a Changelog CHANGELOG.md kept in step by git hooks (`856e0a6`)
 
 ### Changed
 
@@ -45,3 +46,4 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Cap llama-server prompt cache RAM to stop OOM kills under tool load (`a3246a9`)
 - Trim web search results to fit the model's context window (`5928f1e`)
 - Fit web chats into the model's context and keep attachments readable to it (`91997f2`)
+

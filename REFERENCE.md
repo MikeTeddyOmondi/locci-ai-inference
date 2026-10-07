@@ -646,4 +646,15 @@ The engine choice (llama.cpp) is deliberate: GGUF quantization and CPU offload m
 
 ---
 
+## Changes in this repository
 
+The design above is kept as written. These are the fixes this repository needed to make that stack actually run; later changes are in [CHANGELOG.md](CHANGELOG.md).
+
+- Compose: `depends_on: locci-gateway` renamed to `locci-ai-gateway`; the obsolete `version` key dropped; healthchecks added so nginx waits for models to load.
+- llama.cpp image moved to `ghcr.io/ggml-org/llama.cpp`, pinned to `server-b11434`. A `llama-embed-1` service is added (nginx referenced it but compose did not define it). Vision and embed sit behind profiles.
+- Models and ids: the reference's `qwen-coder-7b` / `qwen-coder-14b` ids are replaced by ids that name what runs. `qwen3-1.7b` (Qwen3-1.7B, tool calling) and `qwen2.5-coder-1.5b` (Qwen2.5-Coder-1.5B, code only; it cannot call tools) each get a pool, and the vision pool runs PaddleOCR-VL 1.6 with its mmproj instead of LLaVA 1.5.
+- Nginx: resolver plus `zone` and `resolve` on upstreams. Without these, a missing pool host stops nginx from starting.
+- KrakenD: global and endpoint `timeout` raised to 600s (the 2s default cuts off generation). The invalid `router.disable_strict_restful` key is removed. Rate limiting is configured. Added the `/v1/embeddings` and `/v1/models` endpoints. Auth is ES256 against locci-auth instead of an HS256 dev key.
+- Router: `/v1/embeddings` shares the chat handler; `/v1/models` lists the registry; responses report the requested model id instead of llama-server's GGUF path; upstream is set by `UPSTREAM_URL`; the Dockerfile copies `go.sum`.
+- Errors: a pool that is not running answers `502` in the OpenAI error shape. KrakenD's own `401`/`429` stay empty-bodied (a Community Edition limit; nothing is placed in front of KrakenD, to keep latency down).
+- Scaling: use `docker compose up --scale locci-ai-gateway=N` after removing the `8081` debug port mapping.
