@@ -30,11 +30,41 @@ interface FirecrawlSearchResponse {
   web?: FirecrawlSearchResult[];
 }
 
-/** autonomous-chatbot's system prompt, used for the web endpoint. */
-export const WEB_SYSTEM_PROMPT = `You are a helpful and friendly chatbot assistant. Provide concise and helpful responses to user queries.
-			You can use the weather tool to provide current weather information when users ask about weather conditions.
-			You will always use the search tool to find current information, news, or any web content when users ask questions that require up-to-date information.
-			Always use the tools when relevant and don't rely on your memory when asked about current events or specific information most of the times, and provide clear and concise responses to the user.`;
+/**
+ * The web endpoint's system prompt. Small models follow short numbered rules
+ * better than prose, and need today's date to know what "latest" means. Tool
+ * rules are included only for tools the request actually has: a model told to
+ * use a search tool it was not given prints a fake call as text instead.
+ */
+export function webSystemPrompt(opts: { now: Date; search: boolean; weather: boolean }): string {
+  const today = opts.now.toISOString().slice(0, 10);
+  const rules: string[] = [];
+  if (opts.search) {
+    rules.push(
+      'Your own knowledge is out of date. For any question that depends on facts, technical or not ' +
+        '(libraries, frameworks, APIs, versions, releases, docs, error messages; news, people, companies, ' +
+        'products, prices, events, places), call the search tool before answering, even when you think you ' +
+        'know the answer.',
+      'Answer from the search results, not from memory. If they disagree with what you remember, trust the ' +
+        'results. Name the sources (site or URL) you used.',
+      'Skip the search only for greetings and small talk, or when the user only wants you to work on text ' +
+        'they gave you (summarise, rewrite, translate, explain a pasted file).',
+      'If the search fails or finds nothing useful, say so, then answer from memory and warn that it may be ' +
+        'out of date.',
+    );
+  }
+  if (opts.weather) rules.push('For weather, use the weather tool.');
+  rules.push(
+    'Files and pasted text the user attaches are included in their message in full. Read them there; never ' +
+      'use file or directory tools to open an attachment.',
+    'Keep answers clear, accurate and concise.',
+  );
+  return [
+    `You are Locci AI, a helpful assistant. Today is ${today}.`,
+    '',
+    ...rules.map((rule, i) => `${i + 1}. ${rule}`),
+  ].join('\n');
+}
 
 function weatherTool(apiKey: string) {
   return tool({

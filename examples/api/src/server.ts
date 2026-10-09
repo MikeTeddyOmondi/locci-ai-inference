@@ -1,11 +1,14 @@
 import 'dotenv/config';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import {
+  asSchema,
   convertToModelMessages,
   createUIMessageStream,
   generateId,
   generateText,
   pipeUIMessageStreamToResponse,
+  wrapLanguageModel,
+  type LanguageModel,
   stepCountIs,
   streamText,
   type ModelMessage,
@@ -13,8 +16,8 @@ import {
   type UIMessage,
 } from 'ai';
 import { resolveModel, supportsTools } from './provider.js';
-import { dropPrintedToolCalls, fitToContext, inlineAttachments } from './context.js';
-import { builtinTools, WEB_SYSTEM_PROMPT } from './tools.js';
+import { dropPrintedToolCalls, fitToContext, inlineAttachments, overflowRetry } from './context.js';
+import { builtinTools, webSystemPrompt } from './tools.js';
 import { LibsqlThreadStore, type ThreadStore } from './threads.js';
 import { onShutdown, installShutdown } from './shutdown.js';
 import { connectMcpServers, hasMcpConfig, mcpConfigPath, type McpServerStatus } from './mcp.js';
@@ -33,16 +36,11 @@ const PORT = Number(process.env.PORT ?? 3939);
 // Resolve the model once at startup from MODEL / LOCCI_* env vars.
 const { provider, modelId, model, baseURL, modelFor, chatModels } = resolveModel();
 
-// Characters of conversation the web endpoint sends the model (see context.ts).
-// 8000 is ~3.2k tokens of code-heavy text, leaving room in an 8192-token window
-// for the ~2.6k-token system prompt and tool schemas, a tool result and the answer.
-const MAX_INPUT_CHARS = Number(process.env.MAX_INPUT_CHARS) || 8000;
 const SEARCH_MAX_CHARS = Number(process.env.SEARCH_MAX_CHARS) || 4000;
 
-// Attachments arrive inline in the message (see inlineAttachments); without
-// this the model reaches for the filesystem tools to "open" them.
-const WEB_PROMPT = `${WEB_SYSTEM_PROMPT}
-			Files and pasted text the user attaches are included in their message in full. Read them there; never use file or directory tools to open an attachment.`;
+/** The web system prompt for a request's tool set (see webSystemPrompt). */
+const webPrompt = (toolSet: ToolSet | undefined) =>
+  webSystemPrompt({ now: new Date(), search: !!toolSet?.search, weather: !!toolSet?.weather });
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -110,6 +108,45 @@ if (clashes.length) console.log(`  ↔ MCP tool(s) shadowed by built-ins: ${clas
 const allTools: ToolSet = { ...mcpTools, ...builtin.tools };
 const tools: ToolSet | undefined = Object.keys(allTools).length > 0 ? allTools : undefined;
 
+// --- Context budget (web endpoint) ------------------------------------------
+// How much conversation /api/chat can send: the model's window minus what every
+// request already spends on the system prompt and tool schemas (measured from
+// the tools actually loaded, so adding an MCP server shrinks it), plus room for
+// one tool result and the answer. context.ts shortens the conversation to fit.
+const CONTEXT_TOKENS = Number(process.env.MODEL_CONTEXT_TOKENS) || 8192;
+const ANSWER_TOKENS = 1024;
+const TOOL_RESULT_TOKENS = 1024;
+// Measured on qwen3-1.7b: the system prompt and 19 tool schemas (~11.7k
+// characters) cost 2,978 tokens, ~3.9 per token. Conversation text varies more
+// (prose ~4, code ~2.5, dense JSON ~1.5); overflowRetry catches the misses.
+const SCHEMA_CHARS_PER_TOKEN = 3.9;
+const TEXT_CHARS_PER_TOKEN = 2.5;
+
+async function promptChars(toolSet: ToolSet | undefined): Promise<number> {
+  let n = webPrompt(toolSet).length;
+  for (const [name, t] of Object.entries(toolSet ?? {})) {
+    const parameters = t.inputSchema ? await asSchema(t.inputSchema).jsonSchema : {};
+    n += JSON.stringify({ type: 'function', function: { name, description: t.description, parameters } }).length;
+  }
+  return n;
+}
+const promptCharsWithTools = await promptChars(tools);
+const promptCharsWithoutTools = await promptChars(undefined);
+
+/** Characters of conversation that fit, for a request with or without tools. */
+function inputBudget(withTools: boolean): number {
+  const prompt = withTools ? promptCharsWithTools : promptCharsWithoutTools;
+  const left =
+    CONTEXT_TOKENS - Math.ceil(prompt / SCHEMA_CHARS_PER_TOKEN) - ANSWER_TOKENS - (withTools ? TOOL_RESULT_TOKENS : 0);
+  const chars = Math.floor(Math.max(500, left) * TEXT_CHARS_PER_TOKEN);
+  const cap = Number(process.env.MAX_INPUT_CHARS);
+  return cap > 0 ? Math.min(chars, cap) : chars;
+}
+console.log(
+  `  ✓ context: ${CONTEXT_TOKENS} tokens; prompt + ${Object.keys(tools ?? {}).length} tool schemas ≈ ` +
+    `${Math.ceil(promptCharsWithTools / SCHEMA_CHARS_PER_TOKEN)} tokens; conversation budget ${inputBudget(!!tools)} characters`,
+);
+
 // --- Optional server-side thread store (libSQL) ----------------------------
 const threadStore: ThreadStore | null =
   process.env.THREAD_STORE === 'libsql' ? LibsqlThreadStore.open() : null;
@@ -140,7 +177,7 @@ app.get('/info', (_req, res) => {
  */
 app.get('/models', async (_req, res) => {
   try {
-    res.json({ default: modelId, models: await chatModels(), maxInputChars: MAX_INPUT_CHARS });
+    res.json({ default: modelId, models: await chatModels(), maxInputChars: inputBudget(!!tools && supportsTools(modelId)) });
   } catch (error) {
     console.error('[models]', describeError(error));
     res.json({
@@ -354,14 +391,20 @@ app.post('/api/chat', async (req, res) => {
   // Long pastes and histories are shortened to fit the model's window; the
   // forced web search needs room for its results too.
   const search = webSearch === true ? chatTools?.search : undefined;
-  const budget = search ? Math.max(2000, MAX_INPUT_CHARS - SEARCH_MAX_CHARS) : MAX_INPUT_CHARS;
+  const room = inputBudget(!!chatTools);
+  const budget = search ? Math.max(1000, room - SEARCH_MAX_CHARS) : room;
   const fitted = fitToContext(dropPrintedToolCalls(messages), budget);
   if (fitted.trimmed) console.log(`  [context] conversation shortened to fit ${budget} characters`);
   const modelMessages = await convertToModelMessages(inlineAttachments(fitted.messages));
+  // Retry once, shortened, if the model still rejects the prompt as too long.
+  const guardedModel = wrapLanguageModel({
+    model: chatModel as Exclude<LanguageModel, string>,
+    middleware: overflowRetry(ANSWER_TOKENS),
+  });
   const stream = (history: ModelMessage[]) =>
     streamText({
-      model: chatModel,
-      system: WEB_PROMPT,
+      model: guardedModel,
+      system: webPrompt(chatTools),
       messages: history,
       stopWhen: stepCountIs(5),
       tools: chatTools,

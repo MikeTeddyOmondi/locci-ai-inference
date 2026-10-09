@@ -48,4 +48,5 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Cap llama-server prompt cache RAM to stop OOM kills under tool load (`a3246a9`)
 - Trim web search results to fit the model's context window (`5928f1e`)
 - Fit web chats into the model's context and keep attachments readable to it (`91997f2`)
+- Stop pnpm's npm_config variables reaching npx-based MCP servers (`82cda7a`)
 

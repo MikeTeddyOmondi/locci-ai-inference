@@ -1,4 +1,4 @@
-import type { UIMessage } from 'ai';
+import type { LanguageModelMiddleware, UIMessage } from 'ai';
 
 /**
  * Keeps a web conversation inside the model's context window.
@@ -156,4 +156,82 @@ export function fitToContext(messages: UIMessage[], maxChars: number): FitResult
     fitted[last] = shrinkMessage(fitted[last], Math.max(KEEP_AT_LEAST, maxChars - others));
   }
   return { messages: fitted, trimmed: true };
+}
+
+// --- Overflow retry ----------------------------------------------------------
+// The character budget above is an estimate, and dense code or JSON can run
+// 1.5 characters per token, so a request can still overflow. llama.cpp says by
+// how much ("request (8334 tokens) exceeds the available context size (8192
+// tokens)"), and rejects before generating anything, so the model call is
+// retried once with the prompt's largest parts shortened by that excess. This
+// also covers tool results added mid-answer (a large file read over MCP).
+
+const OVERFLOW = /request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\)/;
+/** Upper bound for text, so one retry cuts enough. */
+const RETRY_CHARS_PER_TOKEN = 4;
+const RETRY_KEEP = 300;
+
+type PromptPart = { type: string; text?: string; output?: { type: string; value: unknown } };
+type PromptMessage = { role: string; content: string | PromptPart[] };
+
+function errorText(error: unknown): string {
+  const e = error as { message?: string; responseBody?: string } | undefined;
+  return `${e?.responseBody ?? ''} ${e?.message ?? String(error)}`;
+}
+
+/** Text a part carries (message text, or a tool result), as a mutable slot. */
+function slots(prompt: PromptMessage[]): { get: () => string; set: (t: string) => void }[] {
+  const out: { get: () => string; set: (t: string) => void }[] = [];
+  for (const message of prompt) {
+    if (typeof message.content === 'string') continue; // the system prompt stays whole
+    for (const part of message.content) {
+      if (part.type === 'text' && typeof part.text === 'string') {
+        out.push({ get: () => part.text ?? '', set: (t) => (part.text = t) });
+      } else if (part.type === 'tool-result' && part.output) {
+        const output = part.output;
+        out.push({
+          get: () => (typeof output.value === 'string' ? output.value : JSON.stringify(output.value ?? null)),
+          set: (t) => {
+            part.output = { type: output.type === 'error-text' ? 'error-text' : 'text', value: t };
+          },
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** A copy of the prompt with its largest text parts shortened by `cut` characters in total. */
+export function shrinkPrompt<T>(prompt: T, cut: number): T {
+  const copy = structuredClone(prompt) as unknown as PromptMessage[];
+  const all = slots(copy);
+  let left = cut;
+  while (left > 0) {
+    const largest = all.reduce((a, b) => (b.get().length > (a?.get().length ?? -1) ? b : a), all[0]);
+    const text = largest?.get() ?? '';
+    if (!largest || text.length <= RETRY_KEEP + 100) break;
+    const keep = Math.max(RETRY_KEEP, text.length - left);
+    largest.set(`${text.slice(0, keep)}\n[Truncated: ${text.length - keep} characters cut to fit the model's context.]`);
+    left -= text.length - keep;
+  }
+  return copy as unknown as T;
+}
+
+/** Model middleware: on a context-size rejection, shorten the prompt and retry once. */
+export function overflowRetry(answerTokens: number): LanguageModelMiddleware {
+  return {
+    wrapStream: async ({ doStream, params, model }) => {
+      try {
+        return await doStream();
+      } catch (error) {
+        const match = OVERFLOW.exec(errorText(error));
+        if (!match) throw error;
+        const used = Number(match[1]);
+        const window = Number(match[2]);
+        const cut = Math.ceil((used - (window - answerTokens)) * RETRY_CHARS_PER_TOKEN);
+        console.log(`  [context] model rejected ${used} tokens (window ${window}); cutting ${cut} characters and retrying`);
+        return model.doStream({ ...params, prompt: shrinkPrompt(params.prompt, cut) });
+      }
+    },
+  };
 }
