@@ -32,6 +32,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Ursula store for resumable web replies behind KrakenD, scoped per tenant (RESUMABLE_STREAMS=ursula) (`9b5a7ed`)
 - AUTH=locci on the example API verifies Locci tokens and keeps threads and resumable replies per user (`e492888`)
 - web sign-in with Locci (PKCE, email and password only) when the API runs AUTH=locci (`b21084a`)
+- Document web sign-in and add the AUTH=locci check to examples-check (`7ad045b`)
 
 ### Changed
 
