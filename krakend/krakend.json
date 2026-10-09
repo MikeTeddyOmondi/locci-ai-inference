@@ -148,7 +148,7 @@
         {
           "url_pattern": "/chats",
           "host": [
-            "http://host.docker.internal:4437"
+            "http://ursula:4437"
           ],
           "encoding": "no-op"
         }
@@ -177,7 +177,7 @@
         {
           "url_pattern": "/chats/{JWT.sub}--{stream}",
           "host": [
-            "http://host.docker.internal:4437"
+            "http://ursula:4437"
           ],
           "encoding": "no-op"
         }
@@ -206,7 +206,7 @@
         {
           "url_pattern": "/chats/{JWT.sub}--{stream}",
           "host": [
-            "http://host.docker.internal:4437"
+            "http://ursula:4437"
           ],
           "encoding": "no-op"
         }
@@ -235,7 +235,7 @@
         {
           "url_pattern": "/chats/{JWT.sub}--{stream}",
           "host": [
-            "http://host.docker.internal:4437"
+            "http://ursula:4437"
           ],
           "encoding": "no-op"
         }

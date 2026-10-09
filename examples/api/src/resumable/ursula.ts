@@ -3,11 +3,11 @@ import type { Recorder, ResumableStreams, StartResult, StreamKey } from './index
 // Recordings in Ursula (the append-only stream store Locci Cloud uses for build
 // logs), reached through this repo's KrakenD at /v1/streams. KrakenD checks the
 // caller's token and names every stream after its subject (<sub>--<name>) in
-// the `chats` bucket, then forwards to the Ursula gateway (events.locci.cloud
-// in production, the docker-compose-templates ursula stack locally), which
-// checks the token again. Ursula itself has no auth and no published port.
+// the `chats` bucket, then forwards to Ursula: this repo's compose service
+// locally (`just ursula-up`, no published port, Ursula has no auth), the
+// events.locci.cloud gateway in production, which checks the token again.
 //
-// Ursula's gateway allows no DELETE, so nothing is ever replaced. Per thread:
+// The production gateway allows no DELETE, so nothing is ever replaced. Per thread:
 //   <threadId>              one line per turn: {"requestId":"...","messageId":"..."}
 //   <threadId>.<requestId>  that turn's reply: the SSE text sent to the browser,
 //                           then `: locci-end` when the reply ended
