@@ -52,6 +52,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Plan web searches from the conversation, reuse earlier results, and search thread contents in the API (`a24caf3`)
 - Ursula store appends only and KrakenD /v1/streams forwards to the Ursula gateway (events.locci.cloud, template stack locally) (`6d3c01f`)
 - /v1/streams back to this repo's Ursula service; events.locci.cloud is the production backend (`85856e1`)
+- Record the browser sign-in check in BACKLOG.md (`86cc15e`)
 
 ### Fixed
 
