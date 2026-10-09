@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { env } from '$env/dynamic/public';
-	import { Download, Monitor, Moon, Sun, Trash2 } from '@lucide/svelte';
+	import { Blobatar } from '@blobatar/svelte';
+	import { Check, Copy, Download, LogOut, Monitor, Moon, Sun, Trash2 } from '@lucide/svelte';
 	import { setMode, userPrefersMode } from 'mode-watcher';
 	import { brand } from '$lib/brand';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -12,11 +13,20 @@
 	import { Separator } from '$lib/components/ui/separator';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group';
 	import { apiUrl } from '$lib/config';
+	import { auth, logout } from '$lib/state/auth.svelte';
 	import { clearAllConversations, conversationState } from '$lib/state/conversationState.svelte';
 	import { selectModel, ui } from '$lib/state/ui.svelte';
 	import { threadStore } from '$lib/storage/threads';
 
 	let confirmClear = $state(false);
+	let copiedTenant = $state(false);
+
+	async function copyTenant() {
+		if (!auth.user) return;
+		await navigator.clipboard.writeText(auth.user.id);
+		copiedTenant = true;
+		setTimeout(() => (copiedTenant = false), 1600);
+	}
 	let exporting = $state(false);
 
 	const storage = env.PUBLIC_THREAD_STORE === 'api' ? 'Example API (libSQL)' : 'This browser (IndexedDB)';
@@ -53,6 +63,34 @@
 <div class="min-h-0 flex-1 overflow-y-auto">
 	<div class="mx-auto w-full max-w-2xl px-4 pt-4 pb-safe sm:pt-8">
 		<h1 class="mb-6 text-2xl font-semibold tracking-tight">Settings</h1>
+
+		{#if auth.user}
+			<section class="mb-8">
+				<h2 class="mb-2 text-sm font-medium text-muted-foreground">Account</h2>
+				<Card.Root class="flex-row flex-wrap items-center gap-4 rounded-2xl p-4 shadow-none">
+					<Blobatar name={auth.user.email || auth.user.id} size={64} animate="always" class="shrink-0" />
+					<div class="min-w-0 flex-1 space-y-1">
+						<p class="truncate text-sm font-medium" title={auth.user.email}>{auth.user.email}</p>
+						<div class="flex items-center gap-1 text-xs text-muted-foreground">
+							<span class="shrink-0">Tenant ID</span>
+							<code class="min-w-0 rounded bg-secondary px-1.5 py-0.5 font-mono break-all sm:truncate" title={auth.user.id}>{auth.user.id}</code>
+							<Button
+								variant="ghost"
+								size="icon-xs"
+								class="shrink-0 rounded-full transition-transform active:scale-90"
+								aria-label={copiedTenant ? 'Tenant ID copied' : 'Copy tenant ID'}
+								onclick={copyTenant}
+							>
+								{#if copiedTenant}<Check class="copy-pop" />{:else}<Copy />{/if}
+							</Button>
+						</div>
+					</div>
+					<Button variant="outline" size="sm" class="shrink-0 gap-1.5 rounded-full max-sm:w-full" onclick={logout}>
+						<LogOut /> Sign out
+					</Button>
+				</Card.Root>
+			</section>
+		{/if}
 
 		<section class="mb-8">
 			<h2 class="mb-2 text-sm font-medium text-muted-foreground">Appearance</h2>

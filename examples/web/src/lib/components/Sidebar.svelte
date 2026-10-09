@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { Ellipsis, LogOut, MessagesSquare, PanelLeft, PanelLeftClose, Pencil, Pin, PinOff, Search, Settings, SquarePen, Trash2, X } from '@lucide/svelte';
+	import { Blobatar } from '@blobatar/svelte';
 	import { auth, logout } from '$lib/state/auth.svelte';
 	import { brand } from '$lib/brand';
 	import {
@@ -294,7 +295,10 @@
 				<Settings class="size-[18px] text-muted-foreground" /> Settings
 			</Button>
 			{#if auth.user}
-				<div class="flex items-center gap-2 py-1 pr-1 pl-3">
+				<div class="flex items-center gap-2.5 py-1 pr-1 pl-2.5">
+					<a href="/settings" onclick={closeDrawer} class="shrink-0" aria-label="Account settings">
+						<Blobatar name={auth.user.email || auth.user.id} size={32} animate="hover" />
+					</a>
 					<span class="min-w-0 flex-1 truncate text-sm text-muted-foreground" title={auth.user.email}>{auth.user.email}</span>
 					<IconButton label="Sign out" onclick={logout}><LogOut /></IconButton>
 				</div>

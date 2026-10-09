@@ -1,5 +1,7 @@
 <script lang="ts">
 	import './layout.css';
+	// Blobatar's idle and hover motion is CSS; without this the avatars sit still.
+	import 'blobatar/motion.css';
 	import { ModeWatcher } from 'mode-watcher';
 	import { onMount } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';

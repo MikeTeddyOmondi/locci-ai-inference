@@ -90,6 +90,9 @@ importers:
       '@ai-sdk/svelte':
         specifier: 5.0.129
         version: 5.0.129(svelte@5.57.2)(zod@4.6.5)
+      '@blobatar/svelte':
+        specifier: 2.7.0
+        version: 2.7.0(blobatar@2.7.0(react@19.3.0))(svelte@5.57.2)
       '@lucide/svelte':
         specifier: 1.52.0
         version: 1.52.0(svelte@5.57.2)
@@ -102,6 +105,9 @@ importers:
       bits-ui:
         specifier: 2.19.5
         version: 2.19.5(@internationalized/date@3.12.4)(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.57.2)(vite@7.3.7(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)))(svelte@5.57.2)(typescript@5.9.3)(vite@7.3.7(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)))(svelte@5.57.2)
+      blobatar:
+        specifier: 2.7.0
+        version: 2.7.0(react@19.3.0)
       clsx:
         specifier: 2.1.1
         version: 2.1.1
@@ -227,6 +233,12 @@ packages:
     engines: {node: '>=22'}
     peerDependencies:
       svelte: ^5.31.0
+
+  '@blobatar/svelte@2.7.0':
+    resolution: {integrity: sha512-Pf/RE5ICEUatbWloaBa4vGLRx+HRsKNN/eNCCHp1Nksgs3+3VuutpZBB61Y169fa0uMgAqPl72fAr+GcmnmtHA==}
+    peerDependencies:
+      blobatar: 2.x
+      svelte: '>=5'
 
   '@bruits/satteri-darwin-arm64@0.9.5':
     resolution: {integrity: sha512-iw4nZgx9v30lWo/MTngQqi1pI78KI0DnkSm+lVJGYdmPLgAyDNJigVhpG42/Iq55A6c1Ll8q66ljyyRiQUxwow==}
@@ -1215,6 +1227,17 @@ packages:
     peerDependencies:
       '@internationalized/date': ^3.8.1
       svelte: ^5.33.0
+
+  blobatar@2.7.0:
+    resolution: {integrity: sha512-tL1p2J3dXE/Z9U/ITwHqU7HBHmTH+Am+hif1J1hWAhvFT1VYC2HG+eXtN7081yuY+L2lrp9bs/VaF7dVH3S2jw==}
+    peerDependencies:
+      react: '>=18'
+      vue: '>=3'
+    peerDependenciesMeta:
+      react:
+        optional: true
+      vue:
+        optional: true
 
   body-parser@2.3.0:
     resolution: {integrity: sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==}
@@ -2263,6 +2286,11 @@ snapshots:
     transitivePeerDependencies:
       - zod
 
+  '@blobatar/svelte@2.7.0(blobatar@2.7.0(react@19.3.0))(svelte@5.57.2)':
+    dependencies:
+      blobatar: 2.7.0(react@19.3.0)
+      svelte: 5.57.2
+
   '@bruits/satteri-darwin-arm64@0.9.5':
     optional: true
 
@@ -3056,6 +3084,10 @@ snapshots:
       tabbable: 6.5.0
     transitivePeerDependencies:
       - '@sveltejs/kit'
+
+  blobatar@2.7.0(react@19.3.0):
+    optionalDependencies:
+      react: 19.3.0
 
   body-parser@2.3.0:
     dependencies:
