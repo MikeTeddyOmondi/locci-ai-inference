@@ -144,6 +144,40 @@ await check('web protocol: /api/chat UI stream + CORS', async () => {
   return `${parts.length} parts${types.has('tool-output-available') ? ', tool output included' : ''}`;
 });
 
+// --- web resume: a dropped reply replays in full; a repeated request runs once ---
+if (info?.resumable && info.resumable !== 'off') {
+  await check('web resume: replay after disconnect, idempotent repeat', async () => {
+    const threadId = `check-${Date.now()}`;
+    const body = {
+      threadId,
+      requestId: crypto.randomUUID(),
+      messages: [{ id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Say hello in five words.' }] }],
+    };
+    const post = (b, signal) =>
+      fetch(`${API}/api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b), signal });
+    const sse = (text) =>
+      text
+        .split('\n')
+        .filter((l) => l.startsWith('data: {'))
+        .map((l) => JSON.parse(l.slice(6)));
+    // Read the first chunk, then hang up, as a page reload would.
+    const ac = new AbortController();
+    const first = await post(body, ac.signal);
+    assert(first.headers.get('x-request-id') === body.requestId, 'x-request-id not echoed');
+    await first.body.getReader().read();
+    ac.abort();
+    const resumed = await fetch(`${API}/api/chat/${threadId}/stream`);
+    assert(resumed.status === 200, `resume HTTP ${resumed.status}`);
+    const replay = sse(await resumed.text());
+    assert(replay[0]?.type === 'start' && replay.at(-1)?.type === 'finish', `replay ran ${replay[0]?.type} to ${replay.at(-1)?.type}`);
+    const again = sse(await (await post(body)).text());
+    assert(JSON.stringify(again) === JSON.stringify(replay), 'repeated request id produced a different reply');
+    const clash = await post({ ...body, messages: [{ id: 'u2', role: 'user', parts: [{ type: 'text', text: 'other' }] }] });
+    assert(clash.status === 409, `reused request id for another message: HTTP ${clash.status}`);
+    return `${info.resumable}: ${replay.length} parts replayed, repeat identical, reuse 409`;
+  });
+} else skip('web resume', 'RESUMABLE_STREAMS=off on the API');
+
 // --- the CLI binary itself --------------------------------------------------------
 await check('cli ask --json', async () => {
   let out;

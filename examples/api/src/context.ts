@@ -219,7 +219,7 @@ export function shrinkPrompt<T>(prompt: T, cut: number): T {
 }
 
 /** Model middleware: on a context-size rejection, shorten the prompt and retry once. */
-export function overflowRetry(answerTokens: number): LanguageModelMiddleware {
+export function overflowRetry(answerTokens: number, tag = ''): LanguageModelMiddleware {
   return {
     wrapStream: async ({ doStream, params, model }) => {
       try {
@@ -230,7 +230,7 @@ export function overflowRetry(answerTokens: number): LanguageModelMiddleware {
         const used = Number(match[1]);
         const window = Number(match[2]);
         const cut = Math.ceil((used - (window - answerTokens)) * RETRY_CHARS_PER_TOKEN);
-        console.log(`  [context] model rejected ${used} tokens (window ${window}); cutting ${cut} characters and retrying`);
+        console.log(`  ${tag}[context] model rejected ${used} tokens (window ${window}); cutting ${cut} characters and retrying`);
         return model.doStream({ ...params, prompt: shrinkPrompt(params.prompt, cut) });
       }
     },

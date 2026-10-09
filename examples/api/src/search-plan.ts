@@ -149,7 +149,11 @@ export function clearlyNoSearch(ask: string, opts: { weatherTool: boolean; hasHi
 }
 
 /** A search query for the latest turn, or null when no search is needed (or planning failed). */
-export async function planSearchQuery(model: LanguageModel, messages: UIMessage[], now = new Date()): Promise<string | null> {
+export async function planSearchQuery(
+  model: LanguageModel,
+  messages: UIMessage[],
+  { now = new Date(), tag = '', abortSignal }: { now?: Date; tag?: string; abortSignal?: AbortSignal } = {},
+): Promise<string | null> {
   try {
     const { text } = await generateText({
       model,
@@ -163,6 +167,7 @@ export async function planSearchQuery(model: LanguageModel, messages: UIMessage[
       ],
       maxOutputTokens: 32,
       temperature: 0,
+      abortSignal,
     });
     const line = (text.split('\n').find((l) => l.trim()) ?? '')
       .replace(/^[\s\-*"'`]+|["'`.\s]+$/g, '')
@@ -171,12 +176,12 @@ export async function planSearchQuery(model: LanguageModel, messages: UIMessage[
     if (!line || /^none\b/i.test(line)) return null;
     const query = line.slice(0, QUERY_MAX);
     if (coveredByEarlier(query, earlierSearches(messages))) {
-      console.log(`  [search] "${query}" is covered by earlier results; skipped`);
+      console.log(`  ${tag}[search] "${query}" is covered by earlier results; skipped`);
       return null;
     }
     return query;
   } catch (error) {
-    console.error('[search plan]', error instanceof Error ? error.message : error);
+    console.error(`${tag}[search plan]`, error instanceof Error ? error.message : error);
     return null;
   }
 }

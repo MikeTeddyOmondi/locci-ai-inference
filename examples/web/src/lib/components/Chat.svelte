@@ -21,10 +21,32 @@
 
 	// The model call lives in the example API (examples/api), which reaches the
 	// Locci AI Gateway through @locci/ai-sdk; this app only streams from it.
+	//
+	// Each send carries the thread id and a fresh request id. The API records a
+	// thread's reply as it streams, so a reload mid-reply resumes it
+	// (resumeStream reads GET /api/chat/<threadId>/stream), and a repeated
+	// request id is answered from that recording rather than run twice.
+	// Temporary chats send no thread id and are never recorded.
 	function newChat(messages: UIMessage[] = []): Chat {
 		return new Chat({
 			messages,
-			transport: new DefaultChatTransport({ api: `${apiUrl()}/api/chat` })
+			transport: new DefaultChatTransport({
+				api: `${apiUrl()}/api/chat`,
+				prepareSendMessagesRequest: ({ body, id, messages, trigger, messageId }) => ({
+					body: {
+						...body,
+						id,
+						messages,
+						trigger,
+						messageId,
+						threadId: temporary ? undefined : (currentThreadId ?? undefined),
+						requestId: crypto.randomUUID()
+					}
+				}),
+				prepareReconnectToStreamRequest: () => ({
+					api: `${apiUrl()}/api/chat/${encodeURIComponent(currentThreadId ?? '')}/stream`
+				})
+			})
 		});
 	}
 
@@ -46,6 +68,9 @@
 					const thread = await threadStore().get(activeId);
 					currentThreadId = thread ? activeId : null;
 					chat = newChat(thread?.messages ?? []);
+					// The question was saved but its reply wasn't: it was still
+					// streaming when the page went away. Pick it up where it is.
+					if (currentThreadId && thread?.messages.at(-1)?.role === 'user') void chat.resumeStream();
 				} catch (error) {
 					console.error('Failed to load thread:', error);
 					chat = newChat();
@@ -65,11 +90,13 @@
 	const isBusy = $derived(status === 'streaming' || status === 'submitted');
 	const lastAssistantIndex = $derived(messages.findLastIndex((m) => m.role === 'assistant'));
 
-	// Persist when a reply finishes, and keep the sidebar preview current.
+	// Persist when a reply ends, and keep the sidebar preview current. Not when
+	// it starts streaming: a half-written reply in the store would hide that it
+	// still needs resuming after a reload (the question alone is saved on send).
 	let previousStatus = 'ready';
 	$effect(() => {
 		const now = status;
-		if ((previousStatus === 'streaming' || previousStatus === 'submitted') && now !== previousStatus) {
+		if ((previousStatus === 'streaming' || previousStatus === 'submitted') && (now === 'ready' || now === 'error')) {
 			void persist();
 		}
 		previousStatus = now;
@@ -127,8 +154,17 @@
 		}
 	}
 
-	function regenerate() {
+	async function regenerate() {
 		chat?.regenerate({ body: { model: ui.model || undefined } });
+		await tick();
+		await persist(); // save without the old reply, so a reload resumes the new one
+	}
+
+	/** Stop the reply. The API keeps a reply running if the browser disconnects, so tell it too. */
+	function stop() {
+		chat?.stop();
+		if (temporary || !currentThreadId) return;
+		fetch(`${apiUrl()}/api/chat/${encodeURIComponent(currentThreadId)}/stream`, { method: 'DELETE' }).catch(() => {});
 	}
 
 	/**
@@ -276,7 +312,7 @@
 
 		<div class="shrink-0 bg-surface px-3 pt-1 pb-safe sm:px-4">
 			<div class="mx-auto w-full max-w-3xl">
-				<Composer onSubmit={handleSubmit} onStop={() => chat?.stop()} busy={isBusy} />
+				<Composer onSubmit={handleSubmit} onStop={stop} busy={isBusy} />
 			</div>
 		</div>
 	</div>

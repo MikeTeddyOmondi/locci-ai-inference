@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { randomUUID } from 'node:crypto';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import {
   asSchema,
@@ -22,6 +23,7 @@ import { builtinTools, webSystemPrompt } from './tools.js';
 import { LibsqlThreadStore, type ThreadStore } from './threads.js';
 import { onShutdown, installShutdown } from './shutdown.js';
 import { connectMcpServers, hasMcpConfig, mcpConfigPath, type McpServerStatus } from './mcp.js';
+import { resumableStreams, THREAD_ID, type Recorder } from './resumable/index.js';
 
 // Shared chat API for the examples. Ported from locci-chat-cli's src/server.ts
 // and harmonised with autonomous-chatbot's /api/chat route, so both the CLI and
@@ -84,7 +86,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader('access-control-allow-origin', origin);
     res.setHeader('vary', 'origin');
     res.setHeader('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    res.setHeader('access-control-allow-headers', 'content-type');
+    res.setHeader('access-control-allow-headers', 'content-type, idempotency-key');
+    res.setHeader('access-control-expose-headers', 'x-request-id');
   }
   if (req.method === 'OPTIONS') {
     res.status(204).end();
@@ -195,6 +198,56 @@ const threadStore: ThreadStore | null =
   process.env.THREAD_STORE === 'libsql' ? LibsqlThreadStore.open() : null;
 if (threadStore) console.log(`  ✓ thread store: libsql (${process.env.THREADS_DB_URL ?? 'file:./data/threads.db'})`);
 
+// Resumable replies (src/resumable): a reply keeps running when the browser
+// refreshes, and GET /api/chat/:threadId/stream replays it.
+const replyStreams = await resumableStreams();
+console.log(`  ✓ resumable replies: ${replyStreams?.name ?? 'off'}`);
+/** Replies being generated in this process, so Stop can abort them. */
+const activeReplies = new Map<string, { requestId: string; controller: AbortController }>();
+
+const SSE_HEADERS = {
+  'content-type': 'text/event-stream',
+  'cache-control': 'no-cache',
+  connection: 'keep-alive',
+  'x-vercel-ai-ui-message-stream': 'v1',
+  'x-accel-buffering': 'no',
+};
+
+/** Send recorded SSE text as the response, stopping if the client goes away. */
+async function sendRecorded(res: Response, stream: ReadableStream<string>) {
+  res.writeHead(200, SSE_HEADERS);
+  const reader = stream.getReader();
+  res.once('close', () => void reader.cancel().catch(() => {}));
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done || res.destroyed) break;
+      res.write(value);
+    }
+  } catch (error) {
+    console.error('[replay]', describeError(error));
+  } finally {
+    res.end();
+  }
+}
+
+/** Copy the SSE text sent to the browser into the recording, until the reply ends. */
+async function record(stream: ReadableStream<string>, recorder: Recorder, threadId: string, requestId: string) {
+  const reader = stream.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      await recorder.append(value);
+    }
+  } catch (error) {
+    console.error(`  [${requestId.slice(0, 8)}] [record]`, describeError(error));
+  } finally {
+    await recorder.finish().catch(() => {});
+    if (activeReplies.get(threadId)?.requestId === requestId) activeReplies.delete(threadId);
+  }
+}
+
 /** What the status endpoints report about the local wiring, no API call. */
 const wiring = () => ({
   provider,
@@ -204,6 +257,7 @@ const wiring = () => ({
   toolNames: tools ? Object.keys(tools) : [],
   mcp: mcpServers.map(({ name, ok, toolCount, error }) => ({ name, ok, toolCount, error })),
   threadStore: threadStore ? 'libsql' : 'none',
+  resumable: replyStreams?.name ?? 'off',
 });
 
 /**
@@ -408,7 +462,14 @@ app.post('/api/chat', async (req, res) => {
     messages,
     webSearch,
     model: requested,
-  } = req.body as { messages?: UIMessage[]; webSearch?: boolean; model?: string };
+    threadId: rawThreadId,
+    requestId: rawRequestId,
+  } = req.body as { messages?: UIMessage[]; webSearch?: boolean; model?: string; threadId?: unknown; requestId?: unknown };
+  // A request id per send (body, or an Idempotency-Key header), echoed back and
+  // tagged on this request's log lines.
+  const requestId = pickRequestId(rawRequestId ?? req.get('idempotency-key'));
+  const tag = `[${requestId.slice(0, 8)}] `;
+  res.setHeader('x-request-id', requestId);
   if (!Array.isArray(messages)) {
     res.status(400).json({ error: 'Body must be { messages: UIMessage[] }' });
     return;
@@ -431,6 +492,42 @@ app.post('/api/chat', async (req, res) => {
   }
   const chatTools = supportsTools(chatModelId) ? webTools : undefined;
 
+  // Resumable replies (web chats send their thread id; the CLI and temporary
+  // chats don't, and are never recorded). The recording starts with this
+  // request's ids, so a repeated request is answered from it.
+  const threadId = typeof rawThreadId === 'string' && THREAD_ID.test(rawThreadId) ? rawThreadId : undefined;
+  const messageId = [...messages].reverse().find((m) => m.role === 'user')?.id ?? '';
+  let recorder: Recorder | undefined;
+  let abortSignal: AbortSignal | undefined;
+  if (replyStreams && threadId) {
+    const started = await replyStreams.start({ threadId, requestId, messageId });
+    if (started.kind === 'conflict') {
+      res.status(409).json({ error: `Request id ${requestId} was already used for another message` });
+      return;
+    }
+    if (started.kind === 'replay') {
+      console.log(`  ${tag}[resume] repeated request: replaying its reply`);
+      await sendRecorded(res, started.stream);
+      return;
+    }
+    recorder = started.recorder;
+    // A new turn supersedes one still running in this thread.
+    activeReplies.get(threadId)?.controller.abort();
+    const controller = new AbortController();
+    activeReplies.set(threadId, { requestId, controller });
+    abortSignal = controller.signal;
+  }
+  // The reply keeps running if the browser disconnects; the recording reads
+  // its own copy of the stream.
+  const consumeSseStream =
+    recorder && threadId
+      ? ({ stream }: { stream: ReadableStream<string> }) => record(stream, recorder, threadId, requestId)
+      : undefined;
+  // One id for the reply, so a replay rebuilds the same message.
+  const assistantId = randomUUID();
+
+  try {
+
   // Long pastes and histories are shortened to fit the model's window; the
   // forced web search needs room for its results too.
   const ask = lastUserText(messages);
@@ -446,21 +543,21 @@ app.post('/api/chat', async (req, res) => {
     SMALL_TALK.test(ask) ||
     clearlyNoSearch(ask, { weatherTool: !!chatTools?.weather, hasHistory: messages.length > 1 });
   if (chatTools?.search && !skip && (AUTO_SEARCH || webSearch === true)) {
-    query = await planSearchQuery(chatModel, messages);
+    query = await planSearchQuery(chatModel, messages, { tag, abortSignal });
   }
   // The composer's "Search the web" toggle always searches, with the raw message if need be.
   if (webSearch === true && !query && chatTools?.search) query = ask.slice(0, 300) || null;
-  console.log(`  [search] ${query ? `query "${query}"` : 'none'}`);
+  console.log(`  ${tag}[search] ${query ? `query "${query}"` : 'none'}`);
   const search = query ? chatTools?.search : undefined;
   const room = inputBudget(chatModelId, !!chatTools);
   const budget = search ? Math.max(1000, room - SEARCH_MAX_CHARS) : room;
   const fitted = fitToContext(dropPrintedToolCalls(messages), budget);
-  if (fitted.trimmed) console.log(`  [context] conversation shortened to fit ${budget} characters`);
+  if (fitted.trimmed) console.log(`  ${tag}[context] conversation shortened to fit ${budget} characters`);
   const modelMessages = await convertToModelMessages(inlineAttachments(fitted.messages));
   // Retry once, shortened, if the model still rejects the prompt as too long.
   const guardedModel = wrapLanguageModel({
     model: chatModel as Exclude<LanguageModel, string>,
-    middleware: overflowRetry(ANSWER_TOKENS),
+    middleware: overflowRetry(ANSWER_TOKENS, tag),
   });
   const toolNames = Object.keys(chatTools ?? {});
   const withoutSearch = toolNames.filter((name) => name !== 'search');
@@ -474,6 +571,7 @@ app.post('/api/chat', async (req, res) => {
       messages: history,
       stopWhen: stepCountIs(MAX_STEPS),
       tools: chatTools,
+      abortSignal,
       prepareStep: ({ stepNumber, steps }) => {
         const calls = steps.flatMap((s) => s.toolCalls);
         const searched = searchedFirst || calls.some((call) => call.toolName === 'search');
@@ -491,7 +589,7 @@ app.post('/api/chat', async (req, res) => {
           system: webPrompt(chatTools, { searched, earlier }),
         };
       },
-      onError: ({ error }) => console.error('[stream error]', describeError(error)),
+      onError: ({ error }) => console.error(`${tag}[stream error]`, describeError(error)),
     });
 
   // The web composer's "Search the web" toggle. Small models don't reliably
@@ -503,6 +601,9 @@ app.post('/api/chat', async (req, res) => {
       // Surface the real reason in the client's chat.error instead of the
       // SDK's generic "An error occurred."
       onError: (error) => describeError(error),
+      originalMessages: messages,
+      generateMessageId: () => assistantId,
+      consumeSseStream,
     });
     return;
   }
@@ -513,7 +614,7 @@ app.post('/api/chat', async (req, res) => {
     execute: async ({ writer }) => {
       const toolCallId = generateId();
       const input = { query: query ?? ask, limit: 3 };
-      writer.write({ type: 'start' });
+      writer.write({ type: 'start', messageId: assistantId });
       writer.write({ type: 'start-step' });
       writer.write({ type: 'tool-input-available', toolCallId, toolName: 'search', input });
 
@@ -552,7 +653,44 @@ app.post('/api/chat', async (req, res) => {
       writer.merge(stream(history, true).toUIMessageStream({ sendStart: false, onError: (error) => describeError(error) }));
     },
   });
-  pipeUIMessageStreamToResponse({ response: res, stream: uiStream });
+  pipeUIMessageStreamToResponse({ response: res, stream: uiStream, consumeSseStream });
+  } catch (error) {
+    // Failed before streaming began: end the recording so a resume doesn't wait on it.
+    if (recorder) await recorder.finish().catch(() => {});
+    if (threadId && activeReplies.get(threadId)?.requestId === requestId) activeReplies.delete(threadId);
+    throw error;
+  }
+});
+
+/** The client's request id if it looks like one, else a fresh UUID. */
+function pickRequestId(value: unknown): string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{8,100}$/.test(value) ? value : randomUUID();
+}
+
+/**
+ * Resume a web chat's latest reply (the AI SDK's chat.resumeStream()): the
+ * recording from its start, then live until it ends. 204 when there is none.
+ */
+app.get('/api/chat/:threadId/stream', async (req, res) => {
+  const { threadId } = req.params;
+  const stream = replyStreams && THREAD_ID.test(threadId) ? await replyStreams.resume(threadId) : null;
+  if (!stream) {
+    res.status(204).end();
+    return;
+  }
+  await sendRecorded(res, stream);
+});
+
+/** Stop a web chat's reply. It runs on after a disconnect, so closing the request alone no longer stops it. */
+app.delete('/api/chat/:threadId/stream', (req, res) => {
+  const active = activeReplies.get(req.params.threadId);
+  if (!active) {
+    res.status(404).json({ error: 'no reply is running for this thread' });
+    return;
+  }
+  active.controller.abort();
+  console.log(`  [${active.requestId.slice(0, 8)}] [stop] reply stopped by the user`);
+  res.status(204).end();
 });
 
 /** Whether the user's latest message carries an attached file or long paste. */
