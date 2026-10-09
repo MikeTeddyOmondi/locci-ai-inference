@@ -16,6 +16,7 @@
 	"dependencies": {
 		"@ai-sdk/svelte": "5.0.129",
 		"@lucide/svelte": "1.52.0",
+		"@openauthjs/openauth": "0.4.3",
 		"ai": "7.0.129",
 		"bits-ui": "2.19.5",
 		"clsx": "2.1.1",

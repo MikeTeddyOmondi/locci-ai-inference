@@ -5,9 +5,11 @@
 	import { MediaQuery } from 'svelte/reactivity';
 	import { brand } from '$lib/brand';
 	import Sidebar from '$lib/components/Sidebar.svelte';
+	import SignIn from '$lib/components/SignIn.svelte';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import * as Tooltip from '$lib/components/ui/tooltip';
+	import { auth, initAuth } from '$lib/state/auth.svelte';
 	import { loadThreads } from '$lib/state/conversationState.svelte';
 	import { loadApiInfo, ui } from '$lib/state/ui.svelte';
 
@@ -16,10 +18,15 @@
 	// The drawer only exists below md; widening the window closes it.
 	const desktop = new MediaQuery('min-width: 768px');
 
-	onMount(() => {
+	// Sign-in settles first: the thread store and the API calls depend on who is signed in.
+	onMount(async () => {
+		await initAuth();
+		if (auth.mode === 'locci' && !auth.user) return;
 		loadThreads();
 		loadApiInfo();
 	});
+
+	const signedIn = $derived(auth.mode === 'off' || auth.user !== null);
 </script>
 
 <ModeWatcher defaultMode="system" />
@@ -27,6 +34,11 @@
 	<title>{brand.name}</title>
 </svelte:head>
 
+{#if !auth.ready}
+	<div class="h-dvh w-full bg-background" aria-busy="true"></div>
+{:else if !signedIn}
+	<SignIn />
+{:else}
 <!-- h-dvh tracks the visible viewport on mobile (100vh includes the area under
      the browser's URL bar, which is what pushed the composer off-screen). -->
 <Tooltip.Provider delayDuration={300}>
@@ -50,3 +62,4 @@
 		</Sheet.Content>
 	</Sheet.Root>
 </Tooltip.Provider>
+{/if}

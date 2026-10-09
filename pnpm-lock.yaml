@@ -93,6 +93,9 @@ importers:
       '@lucide/svelte':
         specifier: 1.52.0
         version: 1.52.0(svelte@5.57.2)
+      '@openauthjs/openauth':
+        specifier: 0.4.3
+        version: 0.4.3(arctic@2.3.4)(hono@4.13.13)
       ai:
         specifier: 7.0.129
         version: 7.0.129(zod@4.6.5)

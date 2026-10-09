@@ -15,6 +15,7 @@ import Localbase from 'localbase';
 import type { UIMessage } from 'ai';
 import { env } from '$env/dynamic/public';
 import { apiUrl } from '$lib/config';
+import { auth, authHeaders } from '$lib/state/auth.svelte';
 
 export interface Thread {
 	id: string;
@@ -236,7 +237,7 @@ export class ApiThreadStore implements ThreadStore {
 	private async call<T>(path: string, init: RequestInit = {}): Promise<T> {
 		const res = await fetch(`${this.base}${path}`, {
 			...init,
-			headers: { 'content-type': 'application/json', ...init.headers }
+			headers: { 'content-type': 'application/json', ...(await authHeaders()), ...init.headers }
 		});
 		if (res.status === 404 && path !== '') return null as T;
 		if (!res.ok) throw new Error(`threads API ${res.status}: ${await res.text().catch(() => '')}`);
@@ -264,8 +265,15 @@ export class ApiThreadStore implements ThreadStore {
 
 let store: ThreadStore | null = null;
 
-/** The configured store, created on first use (in the browser only). */
+/**
+ * The configured store, created on first use (in the browser only, after
+ * sign-in has settled). Signed in, the browser store is one database per user,
+ * so people sharing a browser do not see each other's chats.
+ */
 export function threadStore(): ThreadStore {
-	store ??= env.PUBLIC_THREAD_STORE === 'api' ? new ApiThreadStore() : new LocalbaseThreadStore();
+	store ??=
+		env.PUBLIC_THREAD_STORE === 'api'
+			? new ApiThreadStore()
+			: new LocalbaseThreadStore(auth.user ? `locci-chat-${auth.user.id}` : undefined);
 	return store;
 }

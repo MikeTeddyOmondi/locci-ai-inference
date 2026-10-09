@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { Ellipsis, MessagesSquare, PanelLeft, PanelLeftClose, Pencil, Pin, PinOff, Search, Settings, SquarePen, Trash2, X } from '@lucide/svelte';
+	import { Ellipsis, LogOut, MessagesSquare, PanelLeft, PanelLeftClose, Pencil, Pin, PinOff, Search, Settings, SquarePen, Trash2, X } from '@lucide/svelte';
+	import { auth, logout } from '$lib/state/auth.svelte';
 	import { brand } from '$lib/brand';
 	import {
 		conversationState,
@@ -190,6 +191,9 @@
 		<IconButton label="Search chats" side="right" onclick={openSearch}><Search /></IconButton>
 		<IconButton label="All chats" side="right" href="/chats"><MessagesSquare /></IconButton>
 		<IconButton label="Settings" side="right" href="/settings" class="mt-auto"><Settings /></IconButton>
+		{#if auth.user}
+			<IconButton label={`Sign out ${auth.user.email}`} side="right" onclick={logout}><LogOut /></IconButton>
+		{/if}
 	</nav>
 {:else}
 	<nav class="flex h-full w-full flex-col bg-surface-sunken pt-safe md:w-72 md:border-r" aria-label="Sidebar">
@@ -289,6 +293,12 @@
 			>
 				<Settings class="size-[18px] text-muted-foreground" /> Settings
 			</Button>
+			{#if auth.user}
+				<div class="flex items-center gap-2 py-1 pr-1 pl-3">
+					<span class="min-w-0 flex-1 truncate text-sm text-muted-foreground" title={auth.user.email}>{auth.user.email}</span>
+					<IconButton label="Sign out" onclick={logout}><LogOut /></IconButton>
+				</div>
+			{/if}
 		</div>
 	</nav>
 {/if}

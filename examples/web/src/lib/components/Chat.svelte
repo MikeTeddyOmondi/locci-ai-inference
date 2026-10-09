@@ -6,6 +6,7 @@
 	import { onMount, tick } from 'svelte';
 	import { brand } from '$lib/brand';
 	import { apiUrl } from '$lib/config';
+	import { authHeaders } from '$lib/state/auth.svelte';
 	import { conversationState, createConversation } from '$lib/state/conversationState.svelte';
 	import { ui } from '$lib/state/ui.svelte';
 	import { threadStore } from '$lib/storage/threads';
@@ -32,6 +33,8 @@
 			messages,
 			transport: new DefaultChatTransport({
 				api: `${apiUrl()}/api/chat`,
+				// The bearer token when signed in (AUTH=locci on the API); also sent on resume.
+				headers: authHeaders,
 				prepareSendMessagesRequest: ({ body, id, messages, trigger, messageId }) => ({
 					body: {
 						...body,
@@ -164,7 +167,10 @@
 	function stop() {
 		chat?.stop();
 		if (temporary || !currentThreadId) return;
-		fetch(`${apiUrl()}/api/chat/${encodeURIComponent(currentThreadId)}/stream`, { method: 'DELETE' }).catch(() => {});
+		const url = `${apiUrl()}/api/chat/${encodeURIComponent(currentThreadId)}/stream`;
+		authHeaders()
+			.then((headers) => fetch(url, { method: 'DELETE', headers }))
+			.catch(() => {});
 	}
 
 	/**
