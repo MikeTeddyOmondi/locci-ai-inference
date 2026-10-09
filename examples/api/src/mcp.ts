@@ -111,6 +111,19 @@ export function loadMcpConfig(): Record<string, McpServerConfig> | null {
   return out;
 }
 
+/**
+ * The API's environment minus `npm_config_*`. Run through pnpm, the API carries
+ * pnpm-only settings (`recursive`, `verify-deps-before-run`, ...) that an `npx`
+ * server's npm then warns about ("Unknown env config") on every start.
+ */
+function inheritedEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, val] of Object.entries(process.env)) {
+    if (val !== undefined && !/^npm_config_/i.test(key)) env[key] = val;
+  }
+  return env;
+}
+
 /** Connect one server. Throws on failure; the caller records it per-server. */
 async function connectOne(name: string, config: McpServerConfig): Promise<ConnectedServer> {
   const client = await createMCPClient({
@@ -118,7 +131,7 @@ async function connectOne(name: string, config: McpServerConfig): Promise<Connec
       command: config.command,
       args: config.args,
       // Server-specific vars win over the ambient environment.
-      env: config.env ? { ...(process.env as Record<string, string>), ...config.env } : undefined,
+      env: config.env ? { ...inheritedEnv(), ...config.env } : undefined,
     }),
   });
   const tools = await client.tools();
