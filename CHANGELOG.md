@@ -40,6 +40,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Show the thinking indicator as shimmering text with a typing-dot ellipsis (`d3a5674`)
 - Use canonical Tailwind classes in the chat view (`c260baf`)
 - Move the reference fixes into REFERENCE.md and open issues into BACKLOG.md (`0ca9cd0`)
+- Show the loccibox MCP server's env settings in the example config (`a27ef33`)
 
 ### Fixed
 
