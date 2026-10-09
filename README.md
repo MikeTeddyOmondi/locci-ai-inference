@@ -17,7 +17,7 @@ Client --Bearer JWT--> KrakenD :8080 --X-Locci-Tenant--> locci-ai-gateway --> Ng
 | `scripts/` | `fetch-models.sh`, `locci-auth-token.sh`, and the checks: `smoke.sh`, `tool-calls-api.sh`, `ocr-api.sh` (with images in `scripts/fixtures/`) |
 | `models/` | GGUF files (git-ignored) |
 | `ursula/` | Config for the opt-in Ursula event stream store (`--profile ursula`, `just ursula-up`): records web chat replies so they resume after a reload, reached only through KrakenD's `/v1/streams` |
-| `docs/` | [API_USAGE.md](docs/API_USAGE.md) (curl), [SDK_USAGE.md](docs/SDK_USAGE.md) (`@locci/ai-sdk`), [LLAMA_SERVER.md](docs/LLAMA_SERVER.md) (inference nodes, flags, templates, tool calling), [SLMS.md](docs/SLMS.md) (models we run, measurements, candidates including Baidu's Unlimited-OCR) |
+| `docs/` | [API_USAGE.md](docs/API_USAGE.md) (curl), [SDK_USAGE.md](docs/SDK_USAGE.md) (`@locci/ai-sdk`), [LLAMA_SERVER.md](docs/LLAMA_SERVER.md) (inference nodes, flags, templates, tool calling), [SLMS.md](docs/SLMS.md) (models we run, measurements, candidates including Baidu's Unlimited-OCR), [RESUMABILITY.md](docs/RESUMABILITY.md) (resumable, idempotent web replies and what Ursula adds) |
 | `packages/` | Client libraries; see [packages/README.md](packages/README.md). `@locci/ai-sdk` is the Vercel AI SDK provider |
 | `examples/` | Real apps on `@locci/ai-sdk` for catching regressions: `api` (shared chat API), `cli` (terminal + TUI), `web` (the Locci AI chat UI, SvelteKit + shadcn-svelte); see [examples/README.md](examples/README.md) |
 | `pnpm-workspace.yaml` | One pnpm workspace for `packages/*` and `examples/*`; run `pnpm install` at the root |
