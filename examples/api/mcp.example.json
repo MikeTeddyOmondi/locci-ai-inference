@@ -2,7 +2,11 @@
   "mcpServers": {
     "loccibox": {
       "command": "loccibox",
-      "args": ["mcp", "start"]
+      "args": ["mcp", "start"],
+      "env": {
+        "LOCCIBOX_API_URL": "https://api-box.mt0.dev",
+        "LOCCIBOX_API_KEY": "oSFirCjRsSh7JjUoa5GBUMuB"
+      }
     },
     "filesystem": {
       "command": "npx",
