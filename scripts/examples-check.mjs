@@ -9,6 +9,7 @@
 //   --no-static skips typecheck and the web build (just the live checks)
 
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
@@ -82,6 +83,48 @@ try {
 }
 const hasTool = (name) => info.toolNames.includes(name);
 
+// AUTH=locci on the API: the web routes need a Locci token. Use LOCCI_ACCESS_TOKEN,
+// or exchange LOCCI_API_KEY (from the environment or examples/api/.env).
+let webAuth = {};
+if (info.auth === 'locci') {
+  await check('web auth: /api routes need a Locci token', async () => {
+    const env = { ...apiEnv(), ...process.env };
+    let token = env.LOCCI_ACCESS_TOKEN;
+    if (!token) {
+      assert(env.LOCCI_API_KEY, 'set LOCCI_API_KEY or LOCCI_ACCESS_TOKEN to run the web checks');
+      const res = await fetch(`${(env.LOCCI_AUTH_URL ?? 'https://auth.locci.cloud').replace(/\/+$/, '')}/keys/token`, {
+        method: 'POST',
+        headers: { 'x-locci-api-key': env.LOCCI_API_KEY },
+      });
+      assert(res.ok, `API key exchange HTTP ${res.status}`);
+      token = (await res.json()).token;
+    }
+    webAuth = { authorization: `Bearer ${token}` };
+    const url = `${API}/api/chat/check-${Date.now()}/stream`;
+    const none = await fetch(url);
+    assert(none.status === 401, `no token: HTTP ${none.status}`);
+    const bad = await fetch(url, { headers: { authorization: 'Bearer not.a.token' } });
+    assert(bad.status === 401, `bad token: HTTP ${bad.status}`);
+    const ok = await fetch(url, { headers: webAuth });
+    assert(ok.status === 204, `with token: HTTP ${ok.status}`);
+    return 'no token 401, bad token 401, valid token accepted';
+  });
+} else skip('web auth', 'AUTH=off on the API');
+
+/** KEY=value lines of examples/api/.env, if it exists. */
+function apiEnv() {
+  try {
+    return Object.fromEntries(
+      readFileSync(path.join(root, 'examples/api/.env'), 'utf8')
+        .split('\n')
+        .filter((l) => /^[A-Z_]+=/.test(l))
+        .map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1).replace(/^["']|["']$/g, '')]),
+    );
+  } catch {
+    return {};
+  }
+}
+
 await check('api /status (gateway end to end)', async () => {
   const s = await (await fetch(`${API}/status`)).json();
   assert(s.ok, `${s.error ?? 'not ok'}${s.statusCode ? ` (HTTP ${s.statusCode})` : ''}`);
@@ -125,7 +168,7 @@ if (hasTool('list_directory')) {
 await check('web protocol: /api/chat UI stream + CORS', async () => {
   const res = await fetch(`${API}/api/chat`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: WEB_ORIGIN },
+    headers: { 'content-type': 'application/json', origin: WEB_ORIGIN, ...webAuth },
     body: JSON.stringify({
       messages: [{ id: 'u1', role: 'user', parts: [{ type: 'text', text: hasTool('weather') ? NAIROBI : 'Say hello in five words.' }] }],
     }),
@@ -154,7 +197,7 @@ if (info?.resumable && info.resumable !== 'off') {
       messages: [{ id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Say hello in five words.' }] }],
     };
     const post = (b, signal) =>
-      fetch(`${API}/api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b), signal });
+      fetch(`${API}/api/chat`, { method: 'POST', headers: { 'content-type': 'application/json', ...webAuth }, body: JSON.stringify(b), signal });
     const sse = (text) =>
       text
         .split('\n')
@@ -166,7 +209,7 @@ if (info?.resumable && info.resumable !== 'off') {
     assert(first.headers.get('x-request-id') === body.requestId, 'x-request-id not echoed');
     await first.body.getReader().read();
     ac.abort();
-    const resumed = await fetch(`${API}/api/chat/${threadId}/stream`);
+    const resumed = await fetch(`${API}/api/chat/${threadId}/stream`, { headers: webAuth });
     assert(resumed.status === 200, `resume HTTP ${resumed.status}`);
     const replay = sse(await resumed.text());
     assert(replay[0]?.type === 'start' && replay.at(-1)?.type === 'finish', `replay ran ${replay[0]?.type} to ${replay.at(-1)?.type}`);
