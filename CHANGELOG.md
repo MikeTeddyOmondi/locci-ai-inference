@@ -33,6 +33,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - AUTH=locci on the example API verifies Locci tokens and keeps threads and resumable replies per user (`e492888`)
 - web sign-in with Locci (PKCE, email and password only) when the API runs AUTH=locci (`b21084a`)
 - Document web sign-in and add the AUTH=locci check to examples-check (`7ad045b`)
+- blobatar beside the signed-in email and an Account card (blobatar, email, tenant ID) at the top of Settings (`4b590cd`)
 
 ### Changed
 
