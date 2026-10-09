@@ -16,7 +16,7 @@ Client --Bearer JWT--> KrakenD :8080 --X-Locci-Tenant--> locci-ai-gateway --> Ng
 | `krakend/` | Edge config; validates against locci-auth's JWKS at `host.docker.internal:8787` |
 | `scripts/` | `fetch-models.sh`, `locci-auth-token.sh`, and the checks: `smoke.sh`, `tool-calls-api.sh`, `ocr-api.sh` (with images in `scripts/fixtures/`) |
 | `models/` | GGUF files (git-ignored) |
-| `ursula/` | Config for the opt-in Ursula event stream store (`--profile ursula`, `just ursula-up`): records web chat replies so they resume after a reload, reached only through KrakenD's `/v1/streams` |
+| `ursula/` | Config for this repo's own Ursula node (`--profile ursula`, `just ursula-up`). Unused for now: KrakenD's `/v1/streams` forwards to the Ursula gateway instead (see BACKLOG.md) |
 | `docs/` | [API_USAGE.md](docs/API_USAGE.md) (curl), [SDK_USAGE.md](docs/SDK_USAGE.md) (`@locci/ai-sdk`), [LLAMA_SERVER.md](docs/LLAMA_SERVER.md) (inference nodes, flags, templates, tool calling), [SLMS.md](docs/SLMS.md) (models we run, measurements, candidates including Baidu's Unlimited-OCR) |
 | `packages/` | Client libraries; see [packages/README.md](packages/README.md). `@locci/ai-sdk` is the Vercel AI SDK provider |
 | `examples/` | Real apps on `@locci/ai-sdk` for catching regressions: `api` (shared chat API), `cli` (terminal + TUI), `web` (the Locci AI chat UI, SvelteKit + shadcn-svelte); see [examples/README.md](examples/README.md) |
@@ -84,7 +84,7 @@ docker compose logs locci-ai-gateway | grep meter
 
 Optional pools: `docker compose --profile vision --profile embed up -d`. Until those run, `baidu-ocr-vision` and `embedding-nomic` return `502`.
 
-`just ursula-up` starts Ursula, the event stream store the example API uses with `RESUMABLE_STREAMS=ursula`. It has no auth of its own, so its port is not published: KrakenD's `/v1/streams` endpoints check the token and name each stream after the token's subject (`/chats/<sub>--<stream>`), so callers only reach their own streams. Until it runs, those endpoints return `5xx` and the API records nothing (chat still works).
+KrakenD's `/v1/streams` endpoints front Ursula, the event stream store the example API uses with `RESUMABLE_STREAMS=ursula`. They check the token, name each stream after the token's subject (`/chats/<sub>--<stream>`) so callers only reach their own streams, and forward the token to the Ursula gateway at `host.docker.internal:4437`: locally the `docker-compose-templates/ursula` stack (`docker compose --profile gateway up -d`), in production `https://events.locci.cloud`, which runs the same stack. That gateway checks the token again and has no DELETE route, so the store only appends. Until it runs, those endpoints return `5xx` and the API records nothing (chat still works).
 
 ## Models
 

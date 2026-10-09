@@ -2,13 +2,17 @@ import type { Recorder, ResumableStreams, StartResult, StreamKey } from './index
 
 // Recordings in Ursula (the append-only stream store Locci Cloud uses for build
 // logs), reached through this repo's KrakenD at /v1/streams. KrakenD checks the
-// caller's token and names the stream after its subject, so tenants cannot read
-// each other's chats; Ursula itself has no auth and no published port.
+// caller's token and names every stream after its subject (<sub>--<name>) in
+// the `chats` bucket, then forwards to the Ursula gateway (events.locci.cloud
+// in production, the docker-compose-templates ursula stack locally), which
+// checks the token again. Ursula itself has no auth and no published port.
 //
-// One stream per thread holds its latest reply:
-//   {"requestId":"...","messageId":"..."}\n   who the reply belongs to
-//   data: {...}\n\n ...                          the SSE text sent to the browser
-//   : locci-end\n\n                              the reply ended
+// Ursula's gateway allows no DELETE, so nothing is ever replaced. Per thread:
+//   <threadId>              one line per turn: {"requestId":"...","messageId":"..."}
+//   <threadId>.<requestId>  that turn's reply: the SSE text sent to the browser,
+//                           then `: locci-end` when the reply ended
+// The last index line is the reply to resume; any line answers a repeated
+// request. Neither id can contain a dot (THREAD_ID, pickRequestId).
 //
 // Reading uses a catch-up GET and then long-polls from the returned
 // Stream-Next-Offset. Ursula's live SSE mode would be one request, but KrakenD
@@ -27,7 +31,7 @@ const TOKEN_SKEW_MS = 60_000;
  */
 const IDLE_MS = 120_000;
 
-type Header = { requestId: string; messageId: string };
+type Turn = { requestId: string; messageId: string };
 
 export class UrsulaStreams implements ResumableStreams {
   readonly name = 'ursula';
@@ -64,37 +68,57 @@ export class UrsulaStreams implements ResumableStreams {
     return this.bucket;
   }
 
-  private path(threadId: string) {
-    return `/${encodeURIComponent(threadId)}`;
+  private path(name: string) {
+    return `/${encodeURIComponent(name)}`;
+  }
+
+  private async create(name: string) {
+    const res = await this.call(this.path(name), { method: 'PUT' });
+    if (!res.ok && res.status !== 409) throw new Error(`Ursula: creating stream ${name} failed (HTTP ${res.status})`);
+  }
+
+  /** The thread's turns, oldest first; none if the thread was never recorded. */
+  private async turns(threadId: string): Promise<Turn[]> {
+    const res = await this.call(`${this.path(threadId)}?offset=-1`);
+    if (res.status === 404) return [];
+    if (!res.ok) throw new Error(`Ursula: reading thread ${threadId} failed (HTTP ${res.status})`);
+    return (await res.text()).split('\n').flatMap((line) => {
+      const turn = parseTurn(line);
+      return turn ? [turn] : [];
+    });
   }
 
   async start({ threadId, requestId, messageId }: StreamKey): Promise<StartResult> {
     await this.ensureBucket();
-    const existing = await this.call(`${this.path(threadId)}?offset=-1`);
-    if (existing.ok) {
-      const header = parseHeader(await existing.text());
-      if (header?.requestId === requestId) {
-        if (header.messageId !== messageId) return { kind: 'conflict' };
-        const stream = await this.resume(threadId);
-        if (stream) return { kind: 'replay', stream };
-      }
-    } else if (existing.status !== 404) {
-      throw new Error(`Ursula: reading thread ${threadId} failed (HTTP ${existing.status})`);
+    const reply = `${threadId}.${requestId}`;
+    const earlier = (await this.turns(threadId)).find((turn) => turn.requestId === requestId);
+    if (earlier) {
+      if (earlier.messageId !== messageId) return { kind: 'conflict' };
+      const stream = await this.follow(reply);
+      if (stream) return { kind: 'replay', stream };
     }
 
-    // A new turn replaces the thread's recording.
-    await this.call(this.path(threadId), { method: 'DELETE' });
-    const created = await this.call(this.path(threadId), { method: 'PUT' });
-    if (!created.ok && created.status !== 409) throw new Error(`Ursula: creating the stream failed (HTTP ${created.status})`);
-    return { kind: 'new', recorder: this.recorder(threadId, `${JSON.stringify({ requestId, messageId })}\n`) };
+    // The reply stream exists before the index names it, so a resume that
+    // finds this turn always finds its stream (empty at first, then live).
+    await this.create(reply);
+    await this.create(threadId);
+    if (!earlier) {
+      const res = await this.call(this.path(threadId), {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: `${JSON.stringify({ requestId, messageId })}\n`,
+      });
+      if (!res.ok) throw new Error(`Ursula: recording turn for thread ${threadId} failed (HTTP ${res.status})`);
+    }
+    return { kind: 'new', recorder: this.recorder(reply) };
   }
 
   /**
    * Appends, batched. Never throws: if Ursula fails mid-reply the chat carries
    * on unrecorded rather than breaking.
    */
-  private recorder(threadId: string, header: string): Recorder {
-    let pending = header;
+  private recorder(name: string): Recorder {
+    let pending = '';
     let timer: NodeJS.Timeout | undefined;
     let chain = Promise.resolve();
     let failed = false;
@@ -107,7 +131,7 @@ export class UrsulaStreams implements ResumableStreams {
       if (!body || failed) return chain;
       chain = chain.then(async () => {
         try {
-          const res = await this.call(this.path(threadId), {
+          const res = await this.call(this.path(name), {
             method: 'POST',
             headers: { 'content-type': 'application/octet-stream' },
             body,
@@ -115,13 +139,11 @@ export class UrsulaStreams implements ResumableStreams {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
         } catch (error) {
           failed = true;
-          console.error(`[ursula] recording thread ${threadId} stopped:`, error instanceof Error ? error.message : error);
+          console.error(`[ursula] recording ${name} stopped:`, error instanceof Error ? error.message : error);
         }
       });
       return chain;
     };
-    // The header goes out at once, so a resume right away finds the stream.
-    void flush();
 
     return {
       append: async (chunk) => {
@@ -137,31 +159,27 @@ export class UrsulaStreams implements ResumableStreams {
   }
 
   async resume(threadId: string): Promise<ReadableStream<string> | null> {
-    const first = await this.call(`${this.path(threadId)}?offset=-1`);
+    const latest = (await this.turns(threadId)).at(-1);
+    return latest ? this.follow(`${threadId}.${latest.requestId}`) : null;
+  }
+
+  /** A reply stream from its start, then live until its end marker; null if it does not exist. */
+  private async follow(name: string): Promise<ReadableStream<string> | null> {
+    const first = await this.call(`${this.path(name)}?offset=-1`);
     if (first.status === 404) return null;
-    if (!first.ok) throw new Error(`Ursula: reading thread ${threadId} failed (HTTP ${first.status})`);
+    if (!first.ok) throw new Error(`Ursula: reading ${name} failed (HTTP ${first.status})`);
 
     let offset = first.headers.get('stream-next-offset');
     let body: string | null = await first.text();
-    let headerSeen = false;
     let carry = '';
     let done = false;
     let lastData = Date.now();
     const abort = new AbortController();
 
-    /** Turn raw stream text into what the browser gets: no header line, nothing from the end marker on. */
+    /** Turn raw stream text into what the browser gets: nothing from the end marker on. */
     const take = (text: string): string => {
-      let out = carry + text;
+      const out = carry + text;
       carry = '';
-      if (!headerSeen) {
-        const newline = out.indexOf('\n');
-        if (newline === -1) {
-          carry = out;
-          return '';
-        }
-        headerSeen = true;
-        out = out.slice(newline + 1);
-      }
       const end = out.indexOf(END);
       if (end !== -1) {
         done = true;
@@ -187,13 +205,12 @@ export class UrsulaStreams implements ResumableStreams {
             }
             if (done || !offset) return controller.close();
             if (Date.now() - lastData > IDLE_MS) {
-              console.log(`  [ursula] thread ${threadId}: no new data for ${IDLE_MS / 1000}s, ending the replay`);
+              console.log(`  [ursula] ${name}: no new data for ${IDLE_MS / 1000}s, ending the replay`);
               return controller.close();
             }
-            const res = await this.call(`${this.path(threadId)}?offset=${encodeURIComponent(offset)}&live=long-poll`, {
+            const res = await this.call(`${this.path(name)}?offset=${encodeURIComponent(offset)}&live=long-poll`, {
               signal: abort.signal,
             });
-            // The thread moved on to a new turn (stream deleted): this reply is over.
             if (res.status === 404) return controller.close();
             if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
             offset = res.headers.get('stream-next-offset') ?? offset;
@@ -202,7 +219,7 @@ export class UrsulaStreams implements ResumableStreams {
           }
         } catch (error) {
           if (!abort.signal.aborted) {
-            console.error(`[ursula] reading thread ${threadId}:`, error instanceof Error ? error.message : error);
+            console.error(`[ursula] reading ${name}:`, error instanceof Error ? error.message : error);
           }
           controller.close();
         }
@@ -212,11 +229,11 @@ export class UrsulaStreams implements ResumableStreams {
   }
 }
 
-function parseHeader(text: string): Header | null {
+function parseTurn(line: string): Turn | null {
   try {
-    const header = JSON.parse(text.slice(0, text.indexOf('\n'))) as Partial<Header>;
-    return typeof header.requestId === 'string' && typeof header.messageId === 'string'
-      ? { requestId: header.requestId, messageId: header.messageId }
+    const turn = JSON.parse(line) as Partial<Turn>;
+    return typeof turn.requestId === 'string' && typeof turn.messageId === 'string'
+      ? { requestId: turn.requestId, messageId: turn.messageId }
       : null;
   } catch {
     return null;
