@@ -1,4 +1,4 @@
-import type { Recorder, ResumableStreams, StartResult, StreamKey } from './index.js';
+import type { Owner, Recorder, ResumableStreams, StartResult, StreamKey } from './index.js';
 
 // Recordings in Ursula (the append-only stream store Locci Cloud uses for build
 // logs), reached through this repo's KrakenD at /v1/streams. KrakenD checks the
@@ -47,15 +47,22 @@ export class UrsulaStreams implements ResumableStreams {
     return new UrsulaStreams(base, locciToken(env));
   }
 
-  /** A request to KrakenD with the Locci token, retried once with a fresh token on 401. */
-  private async call(path: string, init: RequestInit = {}): Promise<Response> {
+  /**
+   * A request to KrakenD. With a signed-in owner it carries their token, so
+   * the gateway files the stream under them; otherwise (AUTH=off) the API's
+   * own Locci token, retried once with a fresh one on 401.
+   */
+  private async call(path: string, init: RequestInit = {}, owner?: Owner): Promise<Response> {
     const send = async (force: boolean) =>
       fetch(`${this.base}${path}`, {
         ...init,
-        headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${await this.token(force)}` },
+        headers: {
+          ...(init.headers as Record<string, string>),
+          authorization: `Bearer ${owner?.token ?? (await this.token(force))}`,
+        },
       });
     const res = await send(false);
-    return res.status === 401 ? send(true) : res;
+    return res.status === 401 && !owner?.token ? send(true) : res;
   }
 
   private ensureBucket(): Promise<void> {
@@ -72,14 +79,14 @@ export class UrsulaStreams implements ResumableStreams {
     return `/${encodeURIComponent(name)}`;
   }
 
-  private async create(name: string) {
-    const res = await this.call(this.path(name), { method: 'PUT' });
+  private async create(owner: Owner, name: string) {
+    const res = await this.call(this.path(name), { method: 'PUT' }, owner);
     if (!res.ok && res.status !== 409) throw new Error(`Ursula: creating stream ${name} failed (HTTP ${res.status})`);
   }
 
   /** The thread's turns, oldest first; none if the thread was never recorded. */
-  private async turns(threadId: string): Promise<Turn[]> {
-    const res = await this.call(`${this.path(threadId)}?offset=-1`);
+  private async turns(owner: Owner, threadId: string): Promise<Turn[]> {
+    const res = await this.call(`${this.path(threadId)}?offset=-1`, {}, owner);
     if (res.status === 404) return [];
     if (!res.ok) throw new Error(`Ursula: reading thread ${threadId} failed (HTTP ${res.status})`);
     return (await res.text()).split('\n').flatMap((line) => {
@@ -88,36 +95,36 @@ export class UrsulaStreams implements ResumableStreams {
     });
   }
 
-  async start({ threadId, requestId, messageId }: StreamKey): Promise<StartResult> {
+  async start({ owner, threadId, requestId, messageId }: StreamKey): Promise<StartResult> {
     await this.ensureBucket();
     const reply = `${threadId}.${requestId}`;
-    const earlier = (await this.turns(threadId)).find((turn) => turn.requestId === requestId);
+    const earlier = (await this.turns(owner, threadId)).find((turn) => turn.requestId === requestId);
     if (earlier) {
       if (earlier.messageId !== messageId) return { kind: 'conflict' };
-      const stream = await this.follow(reply);
+      const stream = await this.follow(owner, reply);
       if (stream) return { kind: 'replay', stream };
     }
 
     // The reply stream exists before the index names it, so a resume that
     // finds this turn always finds its stream (empty at first, then live).
-    await this.create(reply);
-    await this.create(threadId);
+    await this.create(owner, reply);
+    await this.create(owner, threadId);
     if (!earlier) {
       const res = await this.call(this.path(threadId), {
         method: 'POST',
         headers: { 'content-type': 'application/octet-stream' },
         body: `${JSON.stringify({ requestId, messageId })}\n`,
-      });
+      }, owner);
       if (!res.ok) throw new Error(`Ursula: recording turn for thread ${threadId} failed (HTTP ${res.status})`);
     }
-    return { kind: 'new', recorder: this.recorder(reply) };
+    return { kind: 'new', recorder: this.recorder(owner, reply) };
   }
 
   /**
    * Appends, batched. Never throws: if Ursula fails mid-reply the chat carries
    * on unrecorded rather than breaking.
    */
-  private recorder(name: string): Recorder {
+  private recorder(owner: Owner, name: string): Recorder {
     let pending = '';
     let timer: NodeJS.Timeout | undefined;
     let chain = Promise.resolve();
@@ -135,7 +142,7 @@ export class UrsulaStreams implements ResumableStreams {
             method: 'POST',
             headers: { 'content-type': 'application/octet-stream' },
             body,
-          });
+          }, owner);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
         } catch (error) {
           failed = true;
@@ -158,14 +165,14 @@ export class UrsulaStreams implements ResumableStreams {
     };
   }
 
-  async resume(threadId: string): Promise<ReadableStream<string> | null> {
-    const latest = (await this.turns(threadId)).at(-1);
-    return latest ? this.follow(`${threadId}.${latest.requestId}`) : null;
+  async resume(owner: Owner, threadId: string): Promise<ReadableStream<string> | null> {
+    const latest = (await this.turns(owner, threadId)).at(-1);
+    return latest ? this.follow(owner, `${threadId}.${latest.requestId}`) : null;
   }
 
   /** A reply stream from its start, then live until its end marker; null if it does not exist. */
-  private async follow(name: string): Promise<ReadableStream<string> | null> {
-    const first = await this.call(`${this.path(name)}?offset=-1`);
+  private async follow(owner: Owner, name: string): Promise<ReadableStream<string> | null> {
+    const first = await this.call(`${this.path(name)}?offset=-1`, {}, owner);
     if (first.status === 404) return null;
     if (!first.ok) throw new Error(`Ursula: reading ${name} failed (HTTP ${first.status})`);
 
@@ -210,7 +217,7 @@ export class UrsulaStreams implements ResumableStreams {
             }
             const res = await this.call(`${this.path(name)}?offset=${encodeURIComponent(offset)}&live=long-poll`, {
               signal: abort.signal,
-            });
+            }, owner);
             if (res.status === 404) return controller.close();
             if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
             offset = res.headers.get('stream-next-offset') ?? offset;

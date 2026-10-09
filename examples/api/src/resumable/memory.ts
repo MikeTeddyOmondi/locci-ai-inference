@@ -1,4 +1,4 @@
-import type { Recorder, ResumableStreams, StartResult, StreamKey } from './index.js';
+import type { Owner, Recorder, ResumableStreams, StartResult, StreamKey } from './index.js';
 
 /** How long a finished reply stays replayable, for a refresh that races its end. */
 const KEEP_FINISHED_MS = 10 * 60 * 1000;
@@ -12,20 +12,21 @@ interface Recording {
   waiting: Set<() => void>;
 }
 
-/** Recordings in the API process: one per thread, the latest reply. */
+/** Recordings in the API process: one per owner's thread, the latest reply. */
 export class MemoryStreams implements ResumableStreams {
   readonly name = 'memory';
   private recordings = new Map<string, Recording>();
 
-  async start({ threadId, requestId, messageId }: StreamKey): Promise<StartResult> {
-    const existing = this.recordings.get(threadId);
+  async start({ owner, threadId, requestId, messageId }: StreamKey): Promise<StartResult> {
+    const key = keyOf(owner, threadId);
+    const existing = this.recordings.get(key);
     if (existing?.requestId === requestId) {
       return existing.messageId === messageId ? { kind: 'replay', stream: replay(existing) } : { kind: 'conflict' };
     }
     // A new turn. Readers of the old one are told it ended.
     if (existing) end(existing);
     const recording: Recording = { requestId, messageId, chunks: [], done: false, waiting: new Set() };
-    this.recordings.set(threadId, recording);
+    this.recordings.set(key, recording);
     const recorder: Recorder = {
       append: async (chunk) => {
         if (recording.done) return;
@@ -35,18 +36,21 @@ export class MemoryStreams implements ResumableStreams {
       finish: async () => {
         end(recording);
         setTimeout(() => {
-          if (this.recordings.get(threadId) === recording) this.recordings.delete(threadId);
+          if (this.recordings.get(key) === recording) this.recordings.delete(key);
         }, KEEP_FINISHED_MS).unref();
       },
     };
     return { kind: 'new', recorder };
   }
 
-  async resume(threadId: string): Promise<ReadableStream<string> | null> {
-    const recording = this.recordings.get(threadId);
+  async resume(owner: Owner, threadId: string): Promise<ReadableStream<string> | null> {
+    const recording = this.recordings.get(keyOf(owner, threadId));
     return recording ? replay(recording) : null;
   }
 }
+
+/** Thread ids come from the client, so recordings are kept apart per owner. */
+const keyOf = (owner: Owner, threadId: string) => `${owner.id}\n${threadId}`;
 
 function wake(recording: Recording) {
   for (const resolve of recording.waiting) resolve();

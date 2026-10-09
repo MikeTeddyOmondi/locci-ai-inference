@@ -7,6 +7,8 @@ import type { UIMessage } from 'ai';
 // (threads + messages) and its threads.ts operations, on libSQL. The web
 // example keeps threads in the browser (IndexedDB) by default; this store is
 // the plumbing for moving them server-side. Enable with THREAD_STORE=libsql.
+// Every thread has an owner (the signed-in user's id, '' with AUTH=off) and a
+// store from forOwner() only ever sees its owner's threads and messages.
 
 export interface Thread {
   id: string;
@@ -37,7 +39,8 @@ export interface ThreadStore {
   update(id: string, patch: ThreadPatch): Promise<Thread | null>;
   remove(id: string): Promise<void>;
   clear(): Promise<void>;
-  syncMessages(id: string, messages: UIMessage[]): Promise<void>;
+  /** False when the thread does not exist for this owner. */
+  syncMessages(id: string, messages: UIMessage[]): Promise<boolean>;
   /** Threads whose title or any message contains `query` (case-insensitive), best first. */
   search(query: string): Promise<ThreadHit[]>;
 }
@@ -62,6 +65,12 @@ const SCHEMA = [
    )`,
   `CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id, position)`,
 ];
+
+/** Columns added after the first release, created on databases that predate them. */
+const MIGRATIONS: { table: string; column: string; sql: string }[] = [
+  { table: 'threads', column: 'owner', sql: `ALTER TABLE threads ADD COLUMN owner TEXT NOT NULL DEFAULT ''` },
+];
+const INDEXES = [`CREATE INDEX IF NOT EXISTS threads_owner ON threads(owner, starred, updated_at)`];
 
 type Row = Record<string, unknown>;
 
@@ -105,13 +114,21 @@ function snippetAround(text: string, needle: string): string {
 const likePattern = (q: string) => `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
 export class LibsqlThreadStore implements ThreadStore {
-  private ready: Promise<void>;
+  constructor(
+    private db: Client,
+    private ready: Promise<void> = migrate(db),
+    private owner = '',
+  ) {}
 
-  constructor(private db: Client) {
-    this.ready = (async () => {
-      await db.execute('PRAGMA foreign_keys = ON');
-      for (const sql of SCHEMA) await db.execute(sql);
-    })();
+  /** The same database, seen as one owner's threads. */
+  forOwner(owner: string): LibsqlThreadStore {
+    return new LibsqlThreadStore(this.db, this.ready, owner);
+  }
+
+  /** Whether the thread exists and belongs to this store's owner. */
+  private async owns(id: string): Promise<boolean> {
+    const rs = await this.db.execute({ sql: 'SELECT 1 FROM threads WHERE id = ? AND owner = ?', args: [id, this.owner] });
+    return rs.rows.length > 0;
   }
 
   /** url defaults to a file next to the API: file:./data/threads.db */
@@ -124,13 +141,16 @@ export class LibsqlThreadStore implements ThreadStore {
 
   async list(): Promise<Thread[]> {
     await this.ready;
-    const rs = await this.db.execute('SELECT * FROM threads ORDER BY starred DESC, updated_at DESC');
+    const rs = await this.db.execute({
+      sql: 'SELECT * FROM threads WHERE owner = ? ORDER BY starred DESC, updated_at DESC',
+      args: [this.owner],
+    });
     return rs.rows.map((r) => toThread(r as Row));
   }
 
   async get(id: string): Promise<ThreadWithMessages | null> {
     await this.ready;
-    const t = await this.db.execute({ sql: 'SELECT * FROM threads WHERE id = ?', args: [id] });
+    const t = await this.db.execute({ sql: 'SELECT * FROM threads WHERE id = ? AND owner = ?', args: [id, this.owner] });
     if (t.rows.length === 0) return null;
     const m = await this.db.execute({
       sql: 'SELECT * FROM messages WHERE thread_id = ? ORDER BY position',
@@ -149,8 +169,8 @@ export class LibsqlThreadStore implements ThreadStore {
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
     await this.db.execute({
-      sql: 'INSERT INTO threads (id, title, preview, starred, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)',
-      args: [id, data.title ?? '', data.preview ?? '', now, now],
+      sql: 'INSERT INTO threads (id, owner, title, preview, starred, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)',
+      args: [id, this.owner, data.title ?? '', data.preview ?? '', now, now],
     });
     return { id, title: data.title ?? '', preview: data.preview ?? '', starred: false, createdAt: now, updatedAt: now };
   }
@@ -162,24 +182,28 @@ export class LibsqlThreadStore implements ThreadStore {
     if (patch.title !== undefined) (sets.push('title = ?'), args.push(patch.title));
     if (patch.preview !== undefined) (sets.push('preview = ?'), args.push(patch.preview));
     if (patch.starred !== undefined) (sets.push('starred = ?'), args.push(patch.starred ? 1 : 0));
-    await this.db.execute({ sql: `UPDATE threads SET ${sets.join(', ')} WHERE id = ?`, args: [...args, id] });
-    const rs = await this.db.execute({ sql: 'SELECT * FROM threads WHERE id = ?', args: [id] });
+    await this.db.execute({
+      sql: `UPDATE threads SET ${sets.join(', ')} WHERE id = ? AND owner = ?`,
+      args: [...args, id, this.owner],
+    });
+    const rs = await this.db.execute({ sql: 'SELECT * FROM threads WHERE id = ? AND owner = ?', args: [id, this.owner] });
     return rs.rows[0] ? toThread(rs.rows[0] as Row) : null;
   }
 
   async remove(id: string): Promise<void> {
     await this.ready;
-    await this.db.execute({ sql: 'DELETE FROM threads WHERE id = ?', args: [id] });
+    await this.db.execute({ sql: 'DELETE FROM threads WHERE id = ? AND owner = ?', args: [id, this.owner] });
   }
 
   async clear(): Promise<void> {
     await this.ready;
-    await this.db.execute('DELETE FROM threads');
+    await this.db.execute({ sql: 'DELETE FROM threads WHERE owner = ?', args: [this.owner] });
   }
 
-  /** Replace a thread's messages, as autonomous-chatbot's syncThreadMessages. */
-  async syncMessages(id: string, messages: UIMessage[]): Promise<void> {
+  /** Replace a thread's messages, as autonomous-chatbot's syncThreadMessages. False if the thread is not this owner's. */
+  async syncMessages(id: string, messages: UIMessage[]): Promise<boolean> {
     await this.ready;
+    if (!(await this.owns(id))) return false;
     const now = new Date().toISOString();
     const stmts = [
       { sql: 'DELETE FROM messages WHERE thread_id = ?', args: [id] },
@@ -194,6 +218,7 @@ export class LibsqlThreadStore implements ThreadStore {
       args: [now, firstUser ? textOf(firstUser).substring(0, 100) : null, id] as never,
     });
     await this.db.batch(stmts, 'write');
+    return true;
   }
 
   /** LIKE is case-insensitive for ASCII in SQLite; the snippet comes from the first matching message. */
@@ -206,9 +231,9 @@ export class LibsqlThreadStore implements ThreadStore {
       sql: `SELECT t.id AS id, (t.title LIKE ?1 ESCAPE '\\' OR t.preview LIKE ?1 ESCAPE '\\') AS in_title, m.content AS content
             FROM threads t
             LEFT JOIN messages m ON m.thread_id = t.id AND m.content LIKE ?1 ESCAPE '\\'
-            WHERE t.title LIKE ?1 ESCAPE '\\' OR t.preview LIKE ?1 ESCAPE '\\' OR m.id IS NOT NULL
+            WHERE t.owner = ?2 AND (t.title LIKE ?1 ESCAPE '\\' OR t.preview LIKE ?1 ESCAPE '\\' OR m.id IS NOT NULL)
             ORDER BY t.starred DESC, t.updated_at DESC, m.position`,
-      args: [pattern],
+      args: [pattern, this.owner],
     });
     const hits = new Map<string, ThreadHit>();
     for (const r of rs.rows) {
@@ -218,4 +243,14 @@ export class LibsqlThreadStore implements ThreadStore {
     }
     return [...hits.values()];
   }
+}
+
+async function migrate(db: Client): Promise<void> {
+  await db.execute('PRAGMA foreign_keys = ON');
+  for (const sql of SCHEMA) await db.execute(sql);
+  for (const { table, column, sql } of MIGRATIONS) {
+    const columns = await db.execute(`PRAGMA table_info(${table})`);
+    if (!columns.rows.some((r) => r.name === column)) await db.execute(sql);
+  }
+  for (const sql of INDEXES) await db.execute(sql);
 }

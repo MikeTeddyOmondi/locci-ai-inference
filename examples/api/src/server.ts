@@ -24,6 +24,7 @@ import { LibsqlThreadStore, type ThreadStore } from './threads.js';
 import { onShutdown, installShutdown } from './shutdown.js';
 import { connectMcpServers, hasMcpConfig, mcpConfigPath, type McpServerStatus } from './mcp.js';
 import { resumableStreams, THREAD_ID, type Recorder } from './resumable/index.js';
+import { authConfig, userOf, withUser } from './auth.js';
 
 // Shared chat API for the examples. Ported from locci-chat-cli's src/server.ts
 // and harmonised with autonomous-chatbot's /api/chat route, so both the CLI and
@@ -86,7 +87,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader('access-control-allow-origin', origin);
     res.setHeader('vary', 'origin');
     res.setHeader('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    res.setHeader('access-control-allow-headers', 'content-type, idempotency-key');
+    res.setHeader('access-control-allow-headers', 'content-type, idempotency-key, authorization');
     res.setHeader('access-control-expose-headers', 'x-request-id');
   }
   if (req.method === 'OPTIONS') {
@@ -194,7 +195,7 @@ console.log(
 );
 
 // --- Optional server-side thread store (libSQL) ----------------------------
-const threadStore: ThreadStore | null =
+const threadStore: LibsqlThreadStore | null =
   process.env.THREAD_STORE === 'libsql' ? LibsqlThreadStore.open() : null;
 if (threadStore) console.log(`  ✓ thread store: libsql (${process.env.THREADS_DB_URL ?? 'file:./data/threads.db'})`);
 
@@ -202,8 +203,15 @@ if (threadStore) console.log(`  ✓ thread store: libsql (${process.env.THREADS_
 // refreshes, and GET /api/chat/:threadId/stream replays it.
 const replyStreams = await resumableStreams();
 console.log(`  ✓ resumable replies: ${replyStreams?.name ?? 'off'}`);
-/** Replies being generated in this process, so Stop can abort them. */
+/** Replies being generated in this process, so Stop can abort them; keyed by replyKey. */
 const activeReplies = new Map<string, { requestId: string; controller: AbortController }>();
+/** Thread ids come from the client, so running replies are told apart per user. */
+const replyKey = (owner: string, threadId: string) => `${owner}\n${threadId}`;
+
+// Sign-in (src/auth.ts): AUTH=locci makes the web routes need a Locci token.
+const auth = authConfig();
+const requireUser = withUser(auth);
+console.log(`  ✓ auth: ${auth.mode === 'locci' ? `locci (${auth.issuer})` : 'off'}`);
 
 const SSE_HEADERS = {
   'content-type': 'text/event-stream',
@@ -232,7 +240,7 @@ async function sendRecorded(res: Response, stream: ReadableStream<string>) {
 }
 
 /** Copy the SSE text sent to the browser into the recording, until the reply ends. */
-async function record(stream: ReadableStream<string>, recorder: Recorder, threadId: string, requestId: string) {
+async function record(stream: ReadableStream<string>, recorder: Recorder, key: string, requestId: string) {
   const reader = stream.getReader();
   try {
     while (true) {
@@ -244,7 +252,7 @@ async function record(stream: ReadableStream<string>, recorder: Recorder, thread
     console.error(`  [${requestId.slice(0, 8)}] [record]`, describeError(error));
   } finally {
     await recorder.finish().catch(() => {});
-    if (activeReplies.get(threadId)?.requestId === requestId) activeReplies.delete(threadId);
+    if (activeReplies.get(key)?.requestId === requestId) activeReplies.delete(key);
   }
 }
 
@@ -258,6 +266,9 @@ const wiring = () => ({
   mcp: mcpServers.map(({ name, ok, toolCount, error }) => ({ name, ok, toolCount, error })),
   threadStore: threadStore ? 'libsql' : 'none',
   resumable: replyStreams?.name ?? 'off',
+  // The web app signs in against this issuer when auth is locci.
+  auth: auth.mode,
+  ...(auth.mode === 'locci' ? { authIssuer: auth.issuer, authClientId: auth.clientId } : {}),
 });
 
 /**
@@ -457,7 +468,7 @@ app.post('/chat', async (req, res) => {
  * Body { messages: UIMessage[] }, responds with the AI SDK UI message stream
  * that `Chat` from @ai-sdk/svelte (or useChat) consumes.
  */
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', requireUser, async (req, res) => {
   const {
     messages,
     webSearch,
@@ -497,12 +508,14 @@ app.post('/api/chat', async (req, res) => {
   // request's ids, so a repeated request is answered from it.
   const threadId = typeof rawThreadId === 'string' && THREAD_ID.test(rawThreadId) ? rawThreadId : undefined;
   const messageId = [...messages].reverse().find((m) => m.role === 'user')?.id ?? '';
+  const user = userOf(res);
+  const key = threadId ? replyKey(user.id, threadId) : '';
   let recorder: Recorder | undefined;
   let abortSignal: AbortSignal | undefined;
   // If the store is unreachable the reply goes out unrecorded rather than failing.
   const started =
     replyStreams && threadId
-      ? await replyStreams.start({ threadId, requestId, messageId }).catch((error: unknown) => {
+      ? await replyStreams.start({ owner: user, threadId, requestId, messageId }).catch((error: unknown) => {
           console.error(`  ${tag}[resume] not recording this reply:`, describeError(error));
           return null;
         })
@@ -519,16 +532,16 @@ app.post('/api/chat', async (req, res) => {
     }
     recorder = started.recorder;
     // A new turn supersedes one still running in this thread.
-    activeReplies.get(threadId)?.controller.abort();
+    activeReplies.get(key)?.controller.abort();
     const controller = new AbortController();
-    activeReplies.set(threadId, { requestId, controller });
+    activeReplies.set(key, { requestId, controller });
     abortSignal = controller.signal;
   }
   // The reply keeps running if the browser disconnects; the recording reads
   // its own copy of the stream.
   const consumeSseStream =
     recorder && threadId
-      ? ({ stream }: { stream: ReadableStream<string> }) => record(stream, recorder, threadId, requestId)
+      ? ({ stream }: { stream: ReadableStream<string> }) => record(stream, recorder, key, requestId)
       : undefined;
   // One id for the reply, so a replay rebuilds the same message.
   const assistantId = randomUUID();
@@ -664,7 +677,7 @@ app.post('/api/chat', async (req, res) => {
   } catch (error) {
     // Failed before streaming began: end the recording so a resume doesn't wait on it.
     if (recorder) await recorder.finish().catch(() => {});
-    if (threadId && activeReplies.get(threadId)?.requestId === requestId) activeReplies.delete(threadId);
+    if (threadId && activeReplies.get(key)?.requestId === requestId) activeReplies.delete(key);
     throw error;
   }
 });
@@ -678,11 +691,11 @@ function pickRequestId(value: unknown): string {
  * Resume a web chat's latest reply (the AI SDK's chat.resumeStream()): the
  * recording from its start, then live until it ends. 204 when there is none.
  */
-app.get('/api/chat/:threadId/stream', async (req, res) => {
-  const { threadId } = req.params;
+app.get('/api/chat/:threadId/stream', requireUser, async (req, res) => {
+  const threadId = String(req.params.threadId);
   const stream =
     replyStreams && THREAD_ID.test(threadId)
-      ? await replyStreams.resume(threadId).catch((error: unknown) => {
+      ? await replyStreams.resume(userOf(res), threadId).catch((error: unknown) => {
           console.error('[resume]', describeError(error));
           return null;
         })
@@ -695,8 +708,8 @@ app.get('/api/chat/:threadId/stream', async (req, res) => {
 });
 
 /** Stop a web chat's reply. It runs on after a disconnect, so closing the request alone no longer stops it. */
-app.delete('/api/chat/:threadId/stream', (req, res) => {
-  const active = activeReplies.get(req.params.threadId);
+app.delete('/api/chat/:threadId/stream', requireUser, (req, res) => {
+  const active = activeReplies.get(replyKey(userOf(res).id, String(req.params.threadId)));
   if (!active) {
     res.status(404).json({ error: 'no reply is running for this thread' });
     return;
@@ -724,6 +737,7 @@ function lastUserText(messages: UIMessage[]): string {
 
 // --- Thread routes (THREAD_STORE=libsql) -----------------------------------
 const threads = express.Router();
+threads.use(requireUser);
 threads.use((_req, res, next) => {
   if (!threadStore) {
     res.status(404).json({ error: 'thread store disabled: set THREAD_STORE=libsql on the API' });
@@ -731,32 +745,33 @@ threads.use((_req, res, next) => {
   }
   next();
 });
-const store = () => threadStore as ThreadStore;
+/** The caller's threads only. */
+const store = (res: Response): ThreadStore => (threadStore as LibsqlThreadStore).forOwner(userOf(res).id);
 threads.get('/', async (_req, res) => {
-  res.json(await store().list());
+  res.json(await store(res).list());
 });
 threads.post('/', async (req, res) => {
-  res.status(201).json(await store().create(req.body ?? {}));
+  res.status(201).json(await store(res).create(req.body ?? {}));
 });
 threads.delete('/', async (_req, res) => {
-  await store().clear();
+  await store(res).clear();
   res.json({ success: true });
 });
 threads.get('/search', async (req, res) => {
-  res.json(await store().search(String(req.query.q ?? '')));
+  res.json(await store(res).search(String(req.query.q ?? '')));
 });
 threads.get('/:id', async (req, res) => {
-  const thread = await store().get(req.params.id);
+  const thread = await store(res).get(req.params.id);
   if (!thread) res.status(404).json({ error: 'thread not found' });
   else res.json(thread);
 });
 threads.patch('/:id', async (req, res) => {
-  const thread = await store().update(req.params.id, req.body ?? {});
+  const thread = await store(res).update(req.params.id, req.body ?? {});
   if (!thread) res.status(404).json({ error: 'thread not found' });
   else res.json(thread);
 });
 threads.delete('/:id', async (req, res) => {
-  await store().remove(req.params.id);
+  await store(res).remove(req.params.id);
   res.json({ success: true });
 });
 threads.put('/:id/messages', async (req, res) => {
@@ -765,8 +780,8 @@ threads.put('/:id/messages', async (req, res) => {
     res.status(400).json({ error: 'Body must be { messages: UIMessage[] }' });
     return;
   }
-  await store().syncMessages(req.params.id, messages);
-  res.json({ success: true });
+  if (await store(res).syncMessages(req.params.id, messages)) res.json({ success: true });
+  else res.status(404).json({ error: 'thread not found' });
 });
 app.use('/api/threads', threads);
 

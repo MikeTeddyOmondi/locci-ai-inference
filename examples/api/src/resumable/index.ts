@@ -13,8 +13,16 @@ import { MemoryStreams } from './memory.js';
 //   ursula            Ursula behind KrakenD (ursula.ts); survives restarts, any instance
 //   off               nothing recorded; /api/chat behaves as it always did
 
-/** Identifies one send: the chat, this request, and the user message it answers. */
+/** Who a recording belongs to: the signed-in user's id ('' with AUTH=off) and their token. */
+export interface Owner {
+  id: string;
+  /** Forwarded to Ursula, whose gateway scopes streams to the token's subject. */
+  token?: string;
+}
+
+/** Identifies one send: whose chat, the chat, this request, and the user message it answers. */
 export interface StreamKey {
+  owner: Owner;
   threadId: string;
   requestId: string;
   messageId: string;
@@ -39,8 +47,8 @@ export interface ResumableStreams {
   readonly name: string;
   /** Begin a reply for a thread. A new request id replaces the thread's earlier recording. */
   start(key: StreamKey): Promise<StartResult>;
-  /** The thread's latest reply, replayed from its start then followed live; null if there is none. */
-  resume(threadId: string): Promise<ReadableStream<string> | null>;
+  /** The owner's thread's latest reply, replayed from its start then followed live; null if there is none. */
+  resume(owner: Owner, threadId: string): Promise<ReadableStream<string> | null>;
 }
 
 /** The configured store, or null when RESUMABLE_STREAMS=off. */

@@ -15,6 +15,7 @@
     "@libsql/client": "0.18.0",
     "@locci/ai-sdk": "workspace:*",
     "@mendable/firecrawl-js": "4.44.0",
+    "@openauthjs/openauth": "0.4.3",
     "ai": "7.0.129",
     "dotenv": "17.4.2",
     "express": "5.2.1",
