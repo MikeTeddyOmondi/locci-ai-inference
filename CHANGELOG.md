@@ -49,4 +49,5 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Trim web search results to fit the model's context window (`5928f1e`)
 - Fit web chats into the model's context and keep attachments readable to it (`91997f2`)
 - Stop pnpm's npm_config variables reaching npx-based MCP servers (`82cda7a`)
+- Size the web context budget from the loaded tools, retry on overflow, and prompt the model to search first (`f5397a3`)
 
