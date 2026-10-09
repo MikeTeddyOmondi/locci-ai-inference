@@ -34,13 +34,21 @@ models *flags:
 up:
     docker compose up --build -d --wait --wait-timeout 600
 
-# Start with the optional qwen2.5-coder, vision and embeddings pools as well.
+# Start with the optional qwen2.5-coder, vision and embeddings pools and Ursula as well.
 up-all:
-    docker compose --profile qwen25 --profile vision --profile embed up --build -d --wait --wait-timeout 900
+    docker compose --profile qwen25 --profile vision --profile embed --profile ursula up --build -d --wait --wait-timeout 900
 
 # Stop and remove the stack (all profiles).
 down:
-    docker compose --profile qwen25 --profile vision --profile embed down
+    docker compose --profile qwen25 --profile vision --profile embed --profile ursula down
+
+# Start Ursula for resumable web replies (RESUMABLE_STREAMS=ursula), reached only via KrakenD.
+ursula-up:
+    docker compose --profile ursula up -d ursula
+
+# Stop Ursula. Its recordings stay in the ursula-data volume.
+ursula-down:
+    docker compose --profile ursula stop ursula
 
 # Container status.
 ps:

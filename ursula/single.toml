@@ -1,0 +1,32 @@
+# Ursula, single durable node, for resumable web chat replies
+# (RESUMABLE_STREAMS=ursula on the example API). Adapted from
+# docker-compose-templates/ursula/ursula/single.toml.
+#
+# The line that matters is `backend = "disk"`. With the default in-memory WAL
+# a restart drops every bucket and stream.
+
+[server]
+# Binds all interfaces inside the container. Nothing publishes this port:
+# Ursula has no auth of its own, so it is reached only through KrakenD
+# (/v1/streams), which checks the caller's token first.
+listen = "0.0.0.0:4437"
+
+[raft]
+node_id = 1
+# Plenty for chat replies on one machine. The standard preset is 256.
+group_count = 16
+
+[raft.wal]
+backend = "disk"
+path = "/var/lib/ursula"
+
+# Cold tier: optional for one node, worth it only for retention past the hot
+# ring. See the template's cluster.toml before running more than one node.
+#
+# [storage.cold]
+# backend = "s3"
+# root = "ursula-locci-ai"
+# [storage.cold.s3]
+# bucket = "ursula-locci"
+# region = "auto"
+# endpoint = "https://<accountid>.r2.cloudflarestorage.com"

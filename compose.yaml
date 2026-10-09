@@ -119,7 +119,32 @@ services:
     profiles: ["embed"]
     command: ["-m", "/models/${EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}", "--host", "0.0.0.0", "--port", "8080", "--embedding", "-c", "2048"]
 
+  # 7. Event streams: Ursula, for resumable web replies (opt-in)
+  # The example API records each web chat reply here with
+  # RESUMABLE_STREAMS=ursula, so a reload resumes it even after an API restart
+  # or on another API instance. Ursula has no auth of its own, so its port is
+  # deliberately not published: the only way in is KrakenD's /v1/streams
+  # endpoints, which check the caller's token. Start it with `just ursula-up`.
+  # The image ships no curl/wget, so there is no healthcheck to wait on.
+  ursula:
+    image: ghcr.io/tonbo-io/ursula:${URSULA_VERSION:-0.3.0}
+    profiles: ["ursula"]
+    command: ["--config", "/etc/ursula/ursula.toml", "--node-id", "1"]
+    expose:
+      - "4437"
+    volumes:
+      - ./ursula/single.toml:/etc/ursula/ursula.toml:ro
+      - ursula-data:/var/lib/ursula
+    environment:
+      - RUSTLOG=${RUSTLOG:-log}
+    restart: unless-stopped
+    networks:
+      - locci-network
+
 networks:
   locci-network:
     name: locci-network
     driver: bridge
+
+volumes:
+  ursula-data:

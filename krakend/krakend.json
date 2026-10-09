@@ -136,6 +136,151 @@
       }
     },
     {
+      "endpoint": "/v1/streams",
+      "method": "PUT",
+      "output_encoding": "no-op",
+      "input_headers": [
+        "Content-Type",
+        "Accept"
+      ],
+      "backend": [
+        {
+          "url_pattern": "/chats",
+          "host": [
+            "http://ursula:4437"
+          ],
+          "encoding": "no-op"
+        }
+      ],
+      "extra_config": {
+        "auth/validator": {
+          "alg": "ES256",
+          "jwk_url": "http://host.docker.internal:8787/.well-known/jwks.json",
+          "issuer": "http://localhost:8787",
+          "cache": true,
+          "cache_duration": 900,
+          "disable_jwk_security": true
+        }
+      }
+    },
+    {
+      "endpoint": "/v1/streams/{stream}",
+      "method": "PUT",
+      "output_encoding": "no-op",
+      "input_headers": [
+        "Content-Type",
+        "Accept"
+      ],
+      "backend": [
+        {
+          "url_pattern": "/chats/{JWT.sub}--{stream}",
+          "host": [
+            "http://ursula:4437"
+          ],
+          "encoding": "no-op"
+        }
+      ],
+      "extra_config": {
+        "auth/validator": {
+          "alg": "ES256",
+          "jwk_url": "http://host.docker.internal:8787/.well-known/jwks.json",
+          "issuer": "http://localhost:8787",
+          "cache": true,
+          "cache_duration": 900,
+          "disable_jwk_security": true
+        }
+      }
+    },
+    {
+      "endpoint": "/v1/streams/{stream}",
+      "method": "POST",
+      "output_encoding": "no-op",
+      "input_headers": [
+        "Content-Type",
+        "Accept"
+      ],
+      "backend": [
+        {
+          "url_pattern": "/chats/{JWT.sub}--{stream}",
+          "host": [
+            "http://ursula:4437"
+          ],
+          "encoding": "no-op"
+        }
+      ],
+      "extra_config": {
+        "auth/validator": {
+          "alg": "ES256",
+          "jwk_url": "http://host.docker.internal:8787/.well-known/jwks.json",
+          "issuer": "http://localhost:8787",
+          "cache": true,
+          "cache_duration": 900,
+          "disable_jwk_security": true
+        }
+      }
+    },
+    {
+      "endpoint": "/v1/streams/{stream}",
+      "method": "DELETE",
+      "output_encoding": "no-op",
+      "input_headers": [
+        "Content-Type",
+        "Accept"
+      ],
+      "backend": [
+        {
+          "url_pattern": "/chats/{JWT.sub}--{stream}",
+          "host": [
+            "http://ursula:4437"
+          ],
+          "encoding": "no-op"
+        }
+      ],
+      "extra_config": {
+        "auth/validator": {
+          "alg": "ES256",
+          "jwk_url": "http://host.docker.internal:8787/.well-known/jwks.json",
+          "issuer": "http://localhost:8787",
+          "cache": true,
+          "cache_duration": 900,
+          "disable_jwk_security": true
+        }
+      }
+    },
+    {
+      "endpoint": "/v1/streams/{stream}",
+      "method": "GET",
+      "output_encoding": "no-op",
+      "input_headers": [
+        "Content-Type",
+        "Accept"
+      ],
+      "backend": [
+        {
+          "url_pattern": "/chats/{JWT.sub}--{stream}",
+          "host": [
+            "http://ursula:4437"
+          ],
+          "encoding": "no-op"
+        }
+      ],
+      "extra_config": {
+        "auth/validator": {
+          "alg": "ES256",
+          "jwk_url": "http://host.docker.internal:8787/.well-known/jwks.json",
+          "issuer": "http://localhost:8787",
+          "cache": true,
+          "cache_duration": 900,
+          "disable_jwk_security": true
+        }
+      },
+      "input_query_strings": [
+        "offset",
+        "live"
+      ],
+      "timeout": "600s"
+    },
+    {
       "endpoint": "/health",
       "method": "GET",
       "output_encoding": "no-op",

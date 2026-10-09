@@ -18,13 +18,10 @@ Remaining gap: if a valid token lacks `properties.id`, nothing overwrites the he
 
 ## Resumable chat streams
 
-Refreshing the web chat mid-reply loses the reply and the question just sent: the browser saves to IndexedDB only when a reply finishes, and the API's stream lives only as long as its HTTP response. The AI SDK has the client half (`chat.resumeStream()` calls `GET /api/chat/<id>/stream`, 204 when there is nothing to resume); the API records the UI message stream as it is sent and replays it. One interface (`examples/api/src/resumable/`), two stores, picked by `RESUMABLE_STREAMS=memory|ursula|off`. The memory store, request ids and idempotency are done (see CHANGELOG.md and the examples README). `off` keeps today's behaviour exactly, and requests without a `threadId` (CLI, temporary chats) are never recorded.
-
-- [ ] **B: Ursula store.** Chunks appended to Ursula, the append-only stream store Locci Cloud uses for build logs. Survives an API restart (what was written is replayed) and works with several API instances, where a resume can land on another instance. Ursula runs under a `ursula` compose profile with no published port, reached only through this repo's KrakenD with the same token check as the chat endpoints. Chat content is more sensitive than build logs: never publish 4437, and scope each stream to the caller's tenant at KrakenD (or in the API if KrakenD cannot template the claim into the path).
-
-Caveats:
+Refreshing the web chat mid-reply loses the reply and the question just sent: the browser saves to IndexedDB only when a reply finishes, and the API's stream lives only as long as its HTTP response. The AI SDK has the client half (`chat.resumeStream()` calls `GET /api/chat/<id>/stream`, 204 when there is nothing to resume); the API records the UI message stream as it is sent and replays it. One interface (`examples/api/src/resumable/`), two stores, picked by `RESUMABLE_STREAMS=memory|ursula|off`. `off` keeps today's behaviour exactly, and requests without a `threadId` (CLI, temporary chats) are never recorded. Both stores, request ids and idempotency are done (see CHANGELOG.md and the examples README). What is left:
 
 - [ ] Memory store: lost on API restart, and only works with one API instance.
 - [ ] Stop only reaches the instance doing the generation (abort handles are local). With several instances behind Ursula, a stop marker in the stream would fix it.
 - [ ] Ursula streams are replaced per thread but never expire; add a retention sweep before real traffic.
 - [ ] The search planning step before the first chunk is not replayed (there is nothing to show yet).
+- [ ] KrakenD CE (2.13) held a streamed GET from Ursula until about 4 KB had built up, so the Ursula store reads with long-polls. Anything else that needs live SSE through KrakenD should be measured first; the chat endpoint is fine because a reply crosses 4 KB quickly, but its first tokens arrive in batches.

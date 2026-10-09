@@ -10,6 +10,7 @@ import { MemoryStreams } from './memory.js';
 //
 // RESUMABLE_STREAMS picks the store:
 //   memory (default)  in the API process; lost on restart, one instance only
+//   ursula            Ursula behind KrakenD (ursula.ts); survives restarts, any instance
 //   off               nothing recorded; /api/chat behaves as it always did
 
 /** Identifies one send: the chat, this request, and the user message it answers. */
@@ -47,7 +48,11 @@ export async function resumableStreams(env = process.env): Promise<ResumableStre
   const choice = (env.RESUMABLE_STREAMS ?? 'memory').toLowerCase();
   if (choice === 'off') return null;
   if (choice === 'memory') return new MemoryStreams();
-  throw new Error(`RESUMABLE_STREAMS must be memory or off (got "${choice}")`);
+  if (choice === 'ursula') {
+    const { UrsulaStreams } = await import('./ursula.js');
+    return UrsulaStreams.fromEnv(env);
+  }
+  throw new Error(`RESUMABLE_STREAMS must be memory, ursula or off (got "${choice}")`);
 }
 
 /** Thread ids come from the client and end up in URLs and keys. */

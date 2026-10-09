@@ -28,6 +28,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Add a Keep a Changelog CHANGELOG.md kept in step by git hooks (`856e0a6`)
 - Full-text chat search, a See all chats link, pointer cursors and animated copy icons in the web chat (`9a282fc`)
 - Document resumable chat streams (memory and Ursula) and request idempotency in BACKLOG.md (`76ad3bf`)
+- Resumable web replies with request ids and idempotent sends, behind RESUMABLE_STREAMS (memory store) (`9c5c631`)
 
 ### Changed
 

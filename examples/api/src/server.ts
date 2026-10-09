@@ -499,8 +499,15 @@ app.post('/api/chat', async (req, res) => {
   const messageId = [...messages].reverse().find((m) => m.role === 'user')?.id ?? '';
   let recorder: Recorder | undefined;
   let abortSignal: AbortSignal | undefined;
-  if (replyStreams && threadId) {
-    const started = await replyStreams.start({ threadId, requestId, messageId });
+  // If the store is unreachable the reply goes out unrecorded rather than failing.
+  const started =
+    replyStreams && threadId
+      ? await replyStreams.start({ threadId, requestId, messageId }).catch((error: unknown) => {
+          console.error(`  ${tag}[resume] not recording this reply:`, describeError(error));
+          return null;
+        })
+      : null;
+  if (started && threadId) {
     if (started.kind === 'conflict') {
       res.status(409).json({ error: `Request id ${requestId} was already used for another message` });
       return;
@@ -673,7 +680,13 @@ function pickRequestId(value: unknown): string {
  */
 app.get('/api/chat/:threadId/stream', async (req, res) => {
   const { threadId } = req.params;
-  const stream = replyStreams && THREAD_ID.test(threadId) ? await replyStreams.resume(threadId) : null;
+  const stream =
+    replyStreams && THREAD_ID.test(threadId)
+      ? await replyStreams.resume(threadId).catch((error: unknown) => {
+          console.error('[resume]', describeError(error));
+          return null;
+        })
+      : null;
   if (!stream) {
     res.status(204).end();
     return;
