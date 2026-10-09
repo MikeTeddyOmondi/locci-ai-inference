@@ -42,6 +42,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Move the reference fixes into REFERENCE.md and open issues into BACKLOG.md (`0ca9cd0`)
 - Show the loccibox MCP server's env settings in the example config (`a27ef33`)
 - Give qwen3 a 16k window per request with a q8 KV cache and make the qwen2.5 pool opt-in (`5613cfa`)
+- Plan web searches from the conversation, reuse earlier results, and search thread contents in the API (`a24caf3`)
 
 ### Fixed
 

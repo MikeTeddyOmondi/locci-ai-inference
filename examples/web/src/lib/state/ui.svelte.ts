@@ -52,6 +52,8 @@ export const ui = $state({
 	sidebarOpen: false,
 	/** Desktop sidebar collapsed to an icon rail. */
 	sidebarCollapsed: readFlag(COLLAPSED_KEY),
+	/** The sidebar's chat search box is open (shared, so the rail can open it in the full sidebar). */
+	searchOpen: false,
 	/** Temporary chat: nothing is created or saved in the thread store. */
 	temporary: false,
 	/** Bumped to start a fresh chat even when already on "/". */

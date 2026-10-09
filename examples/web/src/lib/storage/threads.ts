@@ -31,6 +31,12 @@ export interface ThreadWithMessages extends Thread {
 
 export type ThreadPatch = Partial<Pick<Thread, 'title' | 'preview' | 'starred'>>;
 
+/** A thread matching a search, with the matching text around the hit. */
+export interface ThreadHit {
+	id: string;
+	snippet: string;
+}
+
 export interface ThreadStore {
 	list(): Promise<Thread[]>;
 	get(id: string): Promise<ThreadWithMessages | null>;
@@ -39,12 +45,35 @@ export interface ThreadStore {
 	remove(id: string): Promise<void>;
 	clear(): Promise<void>;
 	syncMessages(id: string, messages: UIMessage[]): Promise<void>;
+	/** Threads whose title or any message contains `query` (case-insensitive), best first. */
+	search(query: string): Promise<ThreadHit[]>;
 }
 
 /** First text part of a message, as the original getMessageContent. */
 function textOf(message: UIMessage): string {
 	const part = message.parts?.find((p) => p.type === 'text');
 	return part && 'text' in part ? part.text : '';
+}
+
+/** All of a message's text, pasted attachments included (without their tags). */
+function allTextOf(message: UIMessage): string {
+	return (message.parts ?? [])
+		.map((p) => (p.type === 'text' && 'text' in p ? p.text : ''))
+		.join(' ')
+		.replace(/<\/?attachment[^>]*>/g, ' ');
+}
+
+const SNIPPET_BEFORE = 12;
+const SNIPPET_AFTER = 90;
+
+/** The text around the first match of `needle` (lowercase), or '' when there is none. */
+export function snippetAround(text: string, needle: string): string {
+	const flat = text.replace(/\s+/g, ' ').trim();
+	const at = flat.toLowerCase().indexOf(needle);
+	if (at === -1) return '';
+	const start = Math.max(0, at - SNIPPET_BEFORE);
+	const end = Math.min(flat.length, at + needle.length + SNIPPET_AFTER);
+	return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`;
 }
 
 /** Starred first, then most recently updated, as the original ordering. */
@@ -145,7 +174,11 @@ export class LocalbaseThreadStore implements ThreadStore {
 	remove(id: string): Promise<void> {
 		return this.serial(async () => {
 			await this.db.collection('threads').doc({ id }).delete();
-			await this.db.collection('messages').doc({ id }).delete();
+			// A chat that never saved a message has no messages doc, and localbase
+			// throws when asked to delete a doc that isn't there.
+			if (await this.db.collection('messages').doc({ id }).get()) {
+				await this.db.collection('messages').doc({ id }).delete();
+			}
 		});
 	}
 
@@ -166,6 +199,32 @@ export class LocalbaseThreadStore implements ThreadStore {
 
 			const firstUser = plain.find((m) => m.role === 'user');
 			await this.updateUnqueued(id, firstUser ? { preview: textOf(firstUser).substring(0, 100) } : {});
+		});
+	}
+
+	/** Reads every thread's messages: fine for a browser's worth of chats. */
+	search(query: string): Promise<ThreadHit[]> {
+		const needle = query.trim().toLowerCase();
+		if (!needle) return Promise.resolve([]);
+		return this.serial(async () => {
+			const threads = ((await this.db.collection('threads').get()) as unknown[]).filter(isThread);
+			const docs = (await this.db.collection('messages').get()) as { id: string; messages?: UIMessage[] }[];
+			const byId = new Map((Array.isArray(docs) ? docs : []).map((d) => [d.id, d.messages ?? []]));
+			const hits: ThreadHit[] = [];
+			for (const t of sortThreads(threads)) {
+				if (`${t.title} ${t.preview}`.toLowerCase().includes(needle)) {
+					hits.push({ id: t.id, snippet: '' });
+					continue;
+				}
+				for (const m of byId.get(t.id) ?? []) {
+					const snippet = snippetAround(allTextOf(m), needle);
+					if (snippet) {
+						hits.push({ id: t.id, snippet });
+						break;
+					}
+				}
+			}
+			return hits;
 		});
 	}
 }
@@ -199,6 +258,8 @@ export class ApiThreadStore implements ThreadStore {
 	syncMessages = async (id: string, messages: UIMessage[]) => {
 		await this.call(`/${id}/messages`, { method: 'PUT', body: JSON.stringify({ messages }) });
 	};
+	search = async (query: string) =>
+		query.trim() ? this.call<ThreadHit[]>(`/search?q=${encodeURIComponent(query.trim())}`) : [];
 }
 
 let store: ThreadStore | null = null;

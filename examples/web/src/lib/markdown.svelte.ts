@@ -84,12 +84,19 @@ function codeToHtml(code: string, lang: string): string {
 	return html;
 }
 
+/** Lucide's copy and check icons, stacked; CSS shows one by the button's data-copied. */
+const svg = (cls: string, body: string) =>
+	`<svg class="${cls}" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+const COPY_ICONS =
+	svg('copy-icon', '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>') +
+	svg('check-icon', '<path d="M20 6 9 17l-5-5"/>');
+
 const marked = new Marked({ breaks: true, gfm: true });
 marked.use({
 	renderer: {
 		code({ text, lang }: Tokens.Code) {
 			const name = (lang ?? '').trim().split(/\s+/)[0];
-			return `<div class="code-block"><div class="code-head"><span>${escapeHtml(name || 'text')}</span><button type="button" data-copy-code>Copy</button></div>${codeToHtml(text, name)}</div>`;
+			return `<div class="code-block"><div class="code-head"><span>${escapeHtml(name || 'text')}</span><button type="button" class="copy-button" data-copy-code aria-label="Copy code" title="Copy code">${COPY_ICONS}</button></div>${codeToHtml(text, name)}</div>`;
 		}
 	}
 });
@@ -101,7 +108,7 @@ export function renderMarkdown(text: string): string {
 }
 
 /**
- * Attachment for a container of rendered markdown: wires the Copy buttons in
+ * Attachment for a container of rendered markdown: wires the copy buttons in
  * code block headers (they are plain HTML, so one delegated listener).
  */
 export function codeCopy(node: HTMLElement) {
@@ -111,8 +118,15 @@ export function codeCopy(node: HTMLElement) {
 		const code = button.closest('.code-block')?.querySelector('pre')?.textContent ?? '';
 		try {
 			await navigator.clipboard.writeText(code);
-			button.textContent = 'Copied';
-			setTimeout(() => (button.textContent = 'Copy'), 1600);
+			button.dataset.copied = '';
+			button.setAttribute('aria-label', 'Copied');
+			clearTimeout(Number(button.dataset.timer));
+			button.dataset.timer = String(
+				setTimeout(() => {
+					delete button.dataset.copied;
+					button.setAttribute('aria-label', 'Copy code');
+				}, 1600)
+			);
 		} catch (err) {
 			console.error('Copy failed:', err);
 		}

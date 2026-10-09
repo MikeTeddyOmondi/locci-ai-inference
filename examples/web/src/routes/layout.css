@@ -144,6 +144,34 @@
 		/* No rubber-band scroll of the whole page on mobile; panes scroll instead. */
 		overscroll-behavior: none;
 	}
+
+	/* Anything clickable shows a pointer (Tailwind 4 resets buttons to the
+	   default arrow). In the base layer, so a component's own cursor-* class
+	   still wins. */
+	button,
+	a[href],
+	summary,
+	select,
+	label[for],
+	input[type='checkbox'],
+	input[type='radio'],
+	input[type='file'],
+	[role='button'],
+	[role='link'],
+	[role='menuitem'],
+	[role='menuitemcheckbox'],
+	[role='menuitemradio'],
+	[role='option'],
+	[role='tab'],
+	[role='switch'],
+	[role='checkbox'],
+	[role='radio'] {
+		cursor: pointer;
+	}
+
+	:is(button, select, input, [role]):is(:disabled, [aria-disabled='true'], [data-disabled]) {
+		cursor: not-allowed;
+	}
 }
 
 @utility bg-surface {
@@ -257,7 +285,7 @@
 	overflow-x: auto;
 }
 
-/* Fenced code: a header with the language and Copy, then the Shiki output.
+/* Fenced code: a header with the language and a copy button, then the Shiki output.
    Shiki emits both themes as CSS variables; .dark picks which one shows. */
 .markdown .code-block {
 	border: 1px solid var(--border);
@@ -276,9 +304,10 @@
 	color: var(--muted-foreground);
 }
 .markdown .code-head button {
+	display: inline-flex;
 	cursor: pointer;
 	border-radius: 0.5rem;
-	padding: 0.2rem 0.55rem;
+	padding: 0.35rem;
 }
 .markdown .code-head button:hover {
 	background: var(--accent);
@@ -330,4 +359,53 @@
 .markdown th {
 	background: var(--surface-raised);
 	font-weight: 600;
+}
+
+/* Copy buttons: a press on click, then the check pops in with a small bounce.
+   The code block button is plain HTML (rendered markdown), so it swaps its two
+   stacked icons by data-copied; the message buttons use .copy-pop directly. */
+.copy-button {
+	display: inline-grid;
+	transition: transform 120ms ease;
+}
+.copy-button:active {
+	transform: scale(0.88);
+}
+.copy-button > svg {
+	grid-area: 1 / 1;
+}
+.copy-button .check-icon,
+.copy-button[data-copied] .copy-icon {
+	display: none;
+}
+.copy-button[data-copied] .check-icon {
+	display: block;
+	animation: copy-pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.copy-pop {
+	animation: copy-pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes copy-pop {
+	0% {
+		transform: scale(0.4) rotate(-12deg);
+		opacity: 0;
+	}
+	60% {
+		transform: scale(1.18) rotate(0deg);
+		opacity: 1;
+	}
+	100% {
+		transform: scale(1);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.copy-button,
+	.copy-button:active {
+		transition: none;
+		transform: none;
+	}
+	.copy-button[data-copied] .check-icon,
+	.copy-pop {
+		animation: none;
+	}
 }

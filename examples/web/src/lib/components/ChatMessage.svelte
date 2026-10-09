@@ -155,8 +155,8 @@
 			{/if}
 		{/each}
 		<div class="flex opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
-			<IconButton label={copied ? 'Copied' : 'Copy message'} size="icon" class="rounded-full" onclick={copy}>
-				{#if copied}<Check />{:else}<Copy />{/if}
+			<IconButton label={copied ? 'Copied' : 'Copy message'} size="icon" class="rounded-full transition-transform active:scale-90" onclick={copy}>
+				{#if copied}<Check class="copy-pop" />{:else}<Copy />{/if}
 			</IconButton>
 			{#if onEdit}
 				<IconButton label="Edit message" size="icon" class="rounded-full" onclick={startEdit}>
@@ -208,8 +208,8 @@
 
 		{#if !streaming && plainText}
 			<div class="-ml-2 flex items-center opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
-				<IconButton label={copied ? 'Copied' : 'Copy reply'} size="icon" class="rounded-full" onclick={copy}>
-					{#if copied}<Check />{:else}<Copy />{/if}
+				<IconButton label={copied ? 'Copied' : 'Copy reply'} size="icon" class="rounded-full transition-transform active:scale-90" onclick={copy}>
+					{#if copied}<Check class="copy-pop" />{:else}<Copy />{/if}
 				</IconButton>
 				{#if onRegenerate}
 					<IconButton label="Regenerate reply" size="icon" class="rounded-full" onclick={onRegenerate}>

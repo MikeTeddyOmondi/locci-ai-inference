@@ -6,21 +6,16 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { conversationState } from '$lib/state/conversationState.svelte';
+	import { createChatSearch } from '$lib/state/chatSearch.svelte';
 	import { startNewChat } from '$lib/state/ui.svelte';
 
-	let query = $state('');
+	const search = createChatSearch();
 
 	onMount(() => {
 		conversationState.activeThreadId = null;
 	});
 
-	const shown = $derived(
-		query.trim()
-			? conversationState.threads.filter((t) =>
-					`${t.title} ${t.preview}`.toLowerCase().includes(query.trim().toLowerCase())
-				)
-			: conversationState.threads
-	);
+	const shown = $derived(search.threads);
 
 	function when(iso: string) {
 		const d = new Date(iso);
@@ -52,11 +47,15 @@
 
 		<div class="relative mb-4">
 			<Search class="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
-			<Input bind:value={query} placeholder="Search chats" aria-label="Search chats" class="h-10 rounded-2xl pl-10 text-base" />
+			<Input bind:value={search.query} placeholder="Search chats" aria-label="Search chats" class="h-10 rounded-2xl pl-10 text-base" />
 		</div>
 
-		{#if shown.length === 0}
-			<p class="py-12 text-center text-sm text-muted-foreground">{query ? 'No chats match.' : 'No chats yet. Start one!'}</p>
+		{#if search.pending && shown.length === 0}
+			<p class="shimmer py-12 text-center text-sm text-muted-foreground" role="status">Searching…</p>
+		{:else if shown.length === 0}
+			<p class="py-12 text-center text-sm text-muted-foreground">
+				{search.query.trim() ? 'No chats match.' : 'No chats yet. Start one!'}
+			</p>
 		{:else}
 			<ul class="divide-y">
 				{#each shown as t (t.id)}
@@ -67,7 +66,9 @@
 									{#if t.starred}<Pin class="size-3.5 shrink-0 text-muted-foreground" />{/if}
 									<span class="truncate">{t.title || t.preview || 'New chat'}</span>
 								</p>
-								{#if t.preview && t.preview !== t.title}
+								{#if search.snippet(t.id)}
+									<p class="truncate text-sm text-muted-foreground">{search.snippet(t.id)}</p>
+								{:else if t.preview && t.preview !== t.title}
 									<p class="truncate text-sm text-muted-foreground">{t.preview}</p>
 								{/if}
 							</div>
