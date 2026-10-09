@@ -19,7 +19,7 @@ Each gateway model id names the model running in its pool. Everything runs in th
 
 - **Tool calling:** forced calls (`tool_choice: "required"`) are parsed into `tool_calls`, tool results round-trip into a text answer, and streamed calls reassemble from deltas, through curl and through the AI SDK. With `"auto"` it called the tool when the question needed it (3 of 3) and answered in plain text for an unrelated prompt with tools present (3 of 3).
 - **Thinking:** off via `--reasoning off`; no `<think>` text or `reasoning_content` in responses. Set `CODER_REASONING=on` in `.env` to enable it (answers get slower and longer; tool calls may then appear in `reasoning_content`).
-- **Memory:** ~2.8 GiB idle and ~3.8 GiB under tool-calling load with `-c 16384 --parallel 2 --cache-ram 1024` (8192 tokens per request, needed once tool schemas are in the prompt), against ~1.25 GiB for Qwen2.5-Coder. Without the `--cache-ram` cap the prompt cache grew until the OOM killer took the node; see [LLAMA_SERVER.md](LLAMA_SERVER.md#measured-on-this-machine).
+- **Memory:** 3.1 GiB after start and 4.2 GiB under a 13,000-token prompt with `-c 32768 --parallel 2`, q8_0 KV cache, `--cache-ram 1024` (16384 tokens per request; previously ~2.8 to 3.8 GiB at 8192 per request with an f16 cache), against ~1.25 GiB for Qwen2.5-Coder. Without the `--cache-ram` cap the prompt cache grew until the OOM killer took the node; see [LLAMA_SERVER.md](LLAMA_SERVER.md#measured-on-this-machine).
 
 ### PaddleOCR-VL 1.6 (vision pool), measured
 

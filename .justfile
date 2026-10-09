@@ -30,17 +30,17 @@ models *flags:
 
 # -- stack --------------------------------------------------------------------
 
-# Build and start the stack (both chat pools), waiting until everything is healthy.
+# Build and start the stack with the qwen3-1.7b pool, waiting until it is healthy.
 up:
     docker compose up --build -d --wait --wait-timeout 600
 
-# Start with the optional vision and embeddings pools as well.
+# Start with the optional qwen2.5-coder, vision and embeddings pools as well.
 up-all:
-    docker compose --profile vision --profile embed up --build -d --wait --wait-timeout 900
+    docker compose --profile qwen25 --profile vision --profile embed up --build -d --wait --wait-timeout 900
 
 # Stop and remove the stack (all profiles).
 down:
-    docker compose --profile vision --profile embed down
+    docker compose --profile qwen25 --profile vision --profile embed down
 
 # Container status.
 ps:

@@ -15,7 +15,7 @@ Each node is one `llama-server` process serving one GGUF model over an OpenAI-co
 | Service | Pool | Model file | Profile |
 | --- | --- | --- | --- |
 | `llama-coder-1` | `/coder` (id `qwen3-1.7b`) | `Qwen3-1.7B-Q4_K_M.gguf` | default |
-| `llama-qwen25-coder-1` | `/qwen25-coder` (id `qwen2.5-coder-1.5b`) | `qwen2.5-coder-1.5b-instruct-q4_k_m.gguf` | default |
+| `llama-qwen25-coder-1` | `/qwen25-coder` (id `qwen2.5-coder-1.5b`) | `qwen2.5-coder-1.5b-instruct-q4_k_m.gguf` | `qwen25` |
 | `llama-vision-1` | `/vision` | `PaddleOCR-VL-1.6.gguf` + `PaddleOCR-VL-1.6-mmproj.gguf` | `vision` |
 | `llama-embed-1` | `/embed` | `nomic-embed-text-v1.5.Q4_K_M.gguf` | `embed` |
 
@@ -35,10 +35,11 @@ Filenames come from `.env` (`CODER_MODEL`, `QWEN25_CODER_MODEL`, `VISION_MODEL`,
 | --- | --- | --- |
 | `-m /models/<file>` | all | The GGUF to load. |
 | `--host 0.0.0.0 --port 8080` | all | Listen inside the container network. |
-| `-c 16384 --parallel 2` | coder (`qwen3-1.7b`) | **Total** context, shared by 2 slots: 8192 tokens per request (see below). `CODER_CTX` / `CODER_PARALLEL` in `.env`. |
+| `-c 32768 --parallel 2` | coder (`qwen3-1.7b`) | **Total** context, shared by 2 slots: 16384 tokens per request (see below). `CODER_CTX` / `CODER_PARALLEL` in `.env`. |
+| `--flash-attn on --cache-type-k q8_0 --cache-type-v q8_0` | coder | Store the KV cache as 8-bit (56 KiB per token instead of 112 for f16), so 16384 per request costs what 8192 did; a quantized V cache needs flash attention. `CODER_KV_TYPE` in `.env` (`f16` to undo). |
 | `-c 8192 --parallel 4` | qwen25-coder | 4 slots of 2048 tokens. |
 | `--cache-ram 1024` / `512` | coder / qwen25-coder | Caps the host-RAM prompt cache in MiB (llama-server's default is 8192). See "Memory" below. `CODER_CACHE_RAM` / `QWEN25_CACHE_RAM` in `.env`. |
-| `--cont-batching` | both coder pools | Batch concurrent requests into one forward pass. Already the default; kept for clarity. |
+| `--cont-batching` | coder pools | Batch concurrent requests into one forward pass. Already the default; kept for clarity. |
 | `--jinja --reasoning off` | coder | Use the model's own template (the default, set explicitly because tool calling depends on it) and keep Qwen3's thinking off so answers and tool calls land in `content` / `tool_calls`. `CODER_REASONING` in `.env` overrides. |
 | `--mmproj <file>` | vision | The image projector (vision encoder) that pairs with the language model. |
 | `-c 8192 --parallel 2 --temp 0` | vision | 2 slots of 4096 tokens (an image costs ~300 to 500 tokens); greedy decoding as the model card recommends. |
@@ -46,9 +47,11 @@ Filenames come from `.env` (`CODER_MODEL`, `QWEN25_CODER_MODEL`, `VISION_MODEL`,
 
 ### Context is split across slots
 
-`-c` is the total KV cache, divided by `--parallel`: **each request gets `-c / --parallel` tokens for prompt plus output**. The `qwen3-1.7b` node logs `n_slots = 2, n_ctx_slot = 8192`; the `qwen2.5-coder-1.5b` node `n_slots = 4, n_ctx_slot = 2048`. A request that doesn't fit fails with `request (N tokens) exceeds the available context size`. Raise `-c` (memory grows with it) or lower `--parallel` (less concurrency) to change the trade-off; `/props` reports the per-slot value as `default_generation_settings.n_ctx`.
+`-c` is the total KV cache, divided by `--parallel`: **each request gets `-c / --parallel` tokens for prompt plus output**. The `qwen3-1.7b` node logs `n_slots = 2, n_ctx_slot = 16384`; the `qwen2.5-coder-1.5b` node `n_slots = 4, n_ctx_slot = 2048`. A request that doesn't fit fails with `request (N tokens) exceeds the available context size`. Raise `-c` (memory grows with it) or lower `--parallel` (less concurrency) to change the trade-off; `/props` reports the per-slot value as `default_generation_settings.n_ctx`.
 
-**Tool schemas count.** Every request with `tools` carries their JSON schemas in the prompt. The examples' API registers 16 tools (`weather`, `search` and 14 filesystem MCP tools), which makes a one-line question ~2,550 prompt tokens before any answer, and ~5,200 by the time a tool result is in. At the original 2048 per request that failed outright; it is why the `qwen3-1.7b` node runs `-c 16384 --parallel 2`. A tool loop also accumulates every tool result, so heavy results (a Firecrawl search can return ~6,000 characters) need the headroom.
+**The ceiling.** Never go past the model's training context, read from the GGUF with `scripts/gguf-info.py`: 40,960 tokens per request for Qwen3-1.7B, 32,768 for Qwen2.5-Coder-1.5B. Beyond it llama.cpp has to stretch the position encoding and a small model's answers fall apart. Under it, memory is the limit: the KV cache for all slots is `-c` times 112 KiB per token for Qwen3-1.7B as f16, 56 KiB as q8_0. 16384 per request (`-c 32768`) as q8_0 is ~1.75 GiB, the same as 8192 as f16 was. Avoid q4_0 KV on a model this small; the quality loss shows. Prompt speed is the other limit on CPU: a 13,000-token prompt takes 70 to 90 s before the first answer token.
+
+**Tool schemas count.** Every request with `tools` carries their JSON schemas in the prompt. The examples' API registers 19 tools (`weather`, `search`, 3 loccibox and 14 filesystem MCP tools), which makes a one-line question ~2,980 prompt tokens before any answer, and ~5,800 by the time a tool result is in. At the original 2048 per request that failed outright; it is why the `qwen3-1.7b` node needs a large window. A tool loop also accumulates every tool result, so heavy results (a Firecrawl search can return ~6,000 characters) need the headroom.
 
 ### Defaults worth knowing
 
@@ -153,12 +156,13 @@ Colima VM, 4 vCPU, 7.7 GiB RAM, CPU only, b11434:
 
 | Node | Resident memory | Speed |
 | --- | --- | --- |
-| coder (Qwen3-1.7B Q4_K_M, `-c 16384`, `--cache-ram 1024`) | ~2.8 GiB idle, plateaus at ~3.8 GiB under tool-calling load | ~50 tokens/s generation, ~190 tokens/s prompt |
+| coder (Qwen3-1.7B Q4_K_M, `-c 32768 --parallel 2`, q8_0 KV, `--cache-ram 1024`) | 3.1 GiB just after start; 4.2 GiB under a 13,000-token prompt | ~50 tokens/s generation; ~190 tokens/s on short prompts, 13,000-token prompts 70 to 90 s |
+| coder, previous settings (`-c 16384 --parallel 2`, f16 KV) | ~2.8 GiB idle, plateaus at ~3.8 GiB under tool-calling load | |
 | vision (PaddleOCR-VL 1.6 + F16 mmproj) | ~1.5 GiB | 13 to 14 tokens/s generation; **image prompts ~2.8 tokens/s**: 110 to 180 s per image |
 | embed (nomic Q4_K_M) | ~100 to 150 MiB | |
-| qwen25-coder (Qwen2.5-Coder-1.5B Q4_K_M, `-c 8192`) | 2.3 GiB just after start; 1.25 GiB measured after hours of running | ~56 tokens/s generation |
+| qwen25-coder (Qwen2.5-Coder-1.5B Q4_K_M, `-c 8192`, opt-in) | 2.3 GiB just after start; 1.25 GiB measured after hours of running | ~56 tokens/s generation |
 
-The four nodes (one per pool) together peak around 6.4 GiB of the 7.7 GiB VM: there is no room for a second Qwen3 node or a bigger model, and the vision pool is best left off (`just up` does) unless OCR is being used.
+`just up` starts only the Qwen3 node, which leaves room for its 16k window; `just up-all` adds the opt-in pools (qwen2.5-coder, vision, embed). Adding up the figures below, all four at once would need ~8 GiB at peak, more than the 7.7 GiB VM, so start the others only when you use them (vision and qwen2.5-coder together are the risky pair). There is no room for a second Qwen3 node or a bigger model.
 
 **Memory: the prompt cache.** Besides the fixed KV cache, llama-server keeps recent prompts in host RAM to skip re-processing them (that is what makes a repeat tool-calling request 5 s instead of 25 s). Its default cap is 8192 MiB, more than this VM has. With ~5,200-token tool prompts the Qwen3 node grew to 4.3 GiB and the kernel's OOM killer took it (`dmesg`: `Out of memory: Killed process ... (llama-server) ... anon-rss:4342592kB`); requests in the following seconds got `503 Loading model` while it restarted. `--cache-ram 1024` bounds it: measured with `RssAnon` over three full `just examples-check` runs, 2.83 → 3.49 → 3.76 → 3.78 GiB, no restarts. `docker stats` right after a restart overstates memory (it counts the model file's page cache); `grep RssAnon /proc/1/status` inside the container is what the OOM killer counts. A 7B Q4_K_M model needs ~4.5 to 5 GiB per node.
 

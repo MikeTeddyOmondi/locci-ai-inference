@@ -31,11 +31,22 @@ export interface ChatModel {
  * What each gateway model is for. The ids come from the gateway; this only
  * adds words. A model the gateway adds later still lists, as a plain chat model.
  */
-const MODEL_INFO: Record<string, Omit<ChatModel, 'id'>> = {
-  'qwen3-1.7b': { description: 'Chat, code and tools', tools: true },
-  'qwen2.5-coder-1.5b': { description: 'Code generation, no tools', tools: false },
+const MODEL_INFO: Record<string, Omit<ChatModel, 'id'> & { contextTokens?: number }> = {
+  // Context per request = llama-server -c / --parallel (compose.yaml).
+  'qwen3-1.7b': { description: 'Chat, code and tools', tools: true, contextTokens: 16384 },
+  'qwen2.5-coder-1.5b': { description: 'Code generation, no tools', tools: false, contextTokens: 2048 },
   'baidu-ocr-vision': { description: 'Reads images (photos coming soon)', tools: false, disabled: true },
 };
+
+/**
+ * Tokens one request may use on a model. MODEL_CONTEXT_TOKENS overrides it for
+ * the configured MODEL (set it when you change CODER_CTX or CODER_PARALLEL).
+ */
+export function contextTokensFor(id: string): number {
+  const configured = Number(process.env.MODEL_CONTEXT_TOKENS);
+  if (configured > 0 && id === (process.env.MODEL ?? DEFAULT_MODEL)) return configured;
+  return MODEL_INFO[id]?.contextTokens ?? 8192;
+}
 
 /** Whether a model may be given tools; unknown ids get none, to be safe. */
 export function supportsTools(id: string): boolean {
@@ -72,7 +83,10 @@ export function resolveModel(): Resolved {
     if (cached && Date.now() - cached.at < 60_000) return cached.models;
     const ids = (await listModels(settings)).map((m) => m.id).filter((id) => !embeddings.has(id));
     if (!ids.includes(modelId)) ids.unshift(modelId);
-    const models = ids.map((id): ChatModel => ({ id, ...(MODEL_INFO[id] ?? { description: 'Chat', tools: false }) }));
+    const models = ids.map((id): ChatModel => {
+      const { description, tools, disabled } = MODEL_INFO[id] ?? { description: 'Chat', tools: false };
+      return { id, description, tools, ...(disabled ? { disabled } : {}) };
+    });
     // Default first, unavailable last, the rest as the gateway lists them.
     const rank = (m: ChatModel) => (m.id === modelId ? 0 : m.disabled ? 2 : 1);
     models.sort((a, b) => rank(a) - rank(b));

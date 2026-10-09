@@ -70,10 +70,10 @@ services:
       - "127.0.0.1:8082:80" # lets a host-run router (`just run`) reach the pools
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    # Only the default pool: the opt-in pools (qwen25, vision, embed) answer
+    # 502 through nginx's `resolve` until they are started.
     depends_on:
       llama-coder-1:
-        condition: service_healthy
-      llama-qwen25-coder-1:
         condition: service_healthy
     networks:
       - locci-network
@@ -86,17 +86,22 @@ services:
   # service as llama-coder-2 and add it to coder_pool in nginx/nginx.conf.
   llama-coder-1:
     <<: *llama
-    # 16384 / 2 slots = 8192 tokens per request: tool schemas plus tool results
-    # overflow 2048 (the examples' 16 tools alone are ~2.5k tokens).
+    # 32768 / 2 slots = 16384 tokens per request. The KV cache is stored as
+    # q8_0 (needs flash attention), half the f16 default's 112 KiB per token, so
+    # this takes the same ~1.75 GiB the 8192-per-request f16 setup did. Keep it
+    # under the model's 40,960-token training context: past that, answers degrade.
     # --cache-ram caps llama-server's host-RAM prompt cache (default 8192 MiB,
     # more than this VM has): unbounded, it grew the node until the OOM killer
     # took it under tool-calling load.
-    command: ["-m", "/models/${CODER_MODEL:-Qwen3-1.7B-Q4_K_M.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "${CODER_CTX:-16384}", "--cont-batching", "--parallel", "${CODER_PARALLEL:-2}", "--jinja", "--reasoning", "${CODER_REASONING:-off}", "--cache-ram", "${CODER_CACHE_RAM:-1024}"]
+    command: ["-m", "/models/${CODER_MODEL:-Qwen3-1.7B-Q4_K_M.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "${CODER_CTX:-32768}", "--cont-batching", "--parallel", "${CODER_PARALLEL:-2}", "--flash-attn", "on", "--cache-type-k", "${CODER_KV_TYPE:-q8_0}", "--cache-type-v", "${CODER_KV_TYPE:-q8_0}", "--jinja", "--reasoning", "${CODER_REASONING:-off}", "--cache-ram", "${CODER_CACHE_RAM:-1024}"]
 
-  # 4b. Inference: Qwen2.5-Coder Pool, model id `qwen2.5-coder-1.5b`
+  # 4b. Inference: Qwen2.5-Coder Pool, model id `qwen2.5-coder-1.5b` (opt-in)
   # Code generation only: this model cannot produce tool calls (docs/SLMS.md).
+  # Off by default to leave memory for the qwen3-1.7b pool's 16k context; start
+  # it with `just up-all` or `docker compose --profile qwen25 up -d`.
   llama-qwen25-coder-1:
     <<: *llama
+    profiles: ["qwen25"]
     command: ["-m", "/models/${QWEN25_CODER_MODEL:-qwen2.5-coder-1.5b-instruct-q4_k_m.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--cont-batching", "--parallel", "${LLAMA_PARALLEL:-4}", "--cache-ram", "${QWEN25_CACHE_RAM:-512}"]
 
   # 5. Inference: Vision/OCR Pool (opt-in)

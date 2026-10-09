@@ -81,7 +81,7 @@ curl -s "$LOCCI_AI_GATEWAY/v1/models" -H "Authorization: Bearer $TOKEN"
 }
 ```
 
-A model is listed even when its pool is not running (see `502` below). Locally `just up` starts the two chat pools (`qwen3-1.7b`, `qwen2.5-coder-1.5b`); `just up-all` adds vision and embeddings.
+A model is listed even when its pool is not running (see `502` below). Locally `just up` starts the `qwen3-1.7b` pool; `just up-all` adds `qwen2.5-coder-1.5b`, vision and embeddings.
 
 ### Chat completion
 
@@ -110,7 +110,7 @@ curl -s "$LOCCI_AI_GATEWAY/v1/chat/completions" \
 }
 ```
 
-**Check `finish_reason`.** `"stop"` means the model finished; `"length"` means it hit `max_tokens` and the answer is cut off mid-sentence, even though the stream ends normally with `[DONE]`. Raise `max_tokens` (prompt plus answer must fit the per-request window: 8192 tokens on `qwen3-1.7b`, 2048 on `qwen2.5-coder-1.5b`; see [LLAMA_SERVER.md](LLAMA_SERVER.md#context-is-split-across-slots)). Requests without `max_tokens` generate until the window is full.
+**Check `finish_reason`.** `"stop"` means the model finished; `"length"` means it hit `max_tokens` and the answer is cut off mid-sentence, even though the stream ends normally with `[DONE]`. Raise `max_tokens` (prompt plus answer must fit the per-request window: 16384 tokens on `qwen3-1.7b`, 2048 on `qwen2.5-coder-1.5b`; see [Context window](#context-window)). Requests without `max_tokens` generate until the window is full.
 
 Request fields are passed through to llama-server, so the usual OpenAI parameters work (`temperature`, `top_p`, `max_tokens`, `stop`, `seed`, `response_format`). `model` in the response is the id you requested; `timings` is llama.cpp's own performance block (trimmed above), not part of the OpenAI schema.
 
@@ -211,12 +211,41 @@ Total due: KES 12,450.00
 
 On the local CPU stack one image takes **two to three minutes** (encoding the image dominates), so set a long client timeout. `just ocr-api` runs both fixtures and checks the results.
 
+## Context window
+
+Every request has a fixed token window for **prompt plus answer**. A request that doesn't fit is rejected before anything is generated.
+
+| Model | Tokens per request | Why |
+| --- | --- | --- |
+| `qwen3-1.7b` | 16,384 | `-c 32768 --parallel 2`, KV cache stored as q8_0 |
+| `qwen2.5-coder-1.5b` | 2,048 | `-c 8192 --parallel 4` (opt-in pool) |
+
+What counts against it:
+
+- **Tool schemas.** Every `tools` entry is sent as JSON schema in the prompt, on every request. With all 19 of the example API's tools (weather, search, 3 loccibox and 14 filesystem MCP tools) a one-line question costs about 2,980 tokens before the user says anything; send only the tools a request needs.
+- **Tool results.** Each tool round trip adds its output; a web search with the example API's defaults adds about 1,900 tokens.
+- **History.** The whole conversation is sent each time.
+- **The answer.** Leave room for it, or set `max_tokens`.
+
+A rough guide: prose is about 4 characters per token, code and markdown about 2.5, dense JSON as little as 1.5.
+
+When a request doesn't fit, llama.cpp answers `400` with the counts (`n_prompt_tokens`, `n_ctx`), here for a 158,203-token prompt:
+
+```json
+{"error":{"code":400,"message":"request (158203 tokens) exceeds the available context size (16384 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":158203,"n_ctx":16384}}
+```
+
+Shorten the input by the difference, or drop tools the request doesn't need. The example API does this for you: it fits each conversation into the window it measures for the loaded tools and, if a request is still rejected, shortens the largest parts by the reported excess and retries once ([examples/README.md](../examples/README.md#api)).
+
+**Changing the window.** It is `CODER_CTX / CODER_PARALLEL` in `.env`. The ceiling is the model's training context: 40,960 tokens for Qwen3-1.7B, 32,768 for Qwen2.5-Coder-1.5B; past that answers fall apart. Below that, memory decides. The KV cache costs 56 KiB per token for Qwen3-1.7B as q8_0 (112 KiB as f16), shared by all slots. Measured on the 8 GiB Colima VM with 16,384 per request, the node uses 3.1 GiB just after start and 4.2 GiB under a 13,000-token prompt. Long prompts are slow on CPU: a 13,000-token prompt took 70 to 90 seconds before the answer started. Details: [LLAMA_SERVER.md](LLAMA_SERVER.md#context-is-split-across-slots).
+
 ## Errors
 
 | Status | When | Body |
 | --- | --- | --- |
 | `400` | Unknown `model` | `{"error":{"message":"unknown model: gpt-9","type":"invalid_request_error"}}` |
 | `400` | Body is not JSON | `{"error":{"message":"invalid JSON","type":"invalid_request_error"}}` |
+| `400` | Prompt plus answer don't fit the model's window ([Context window](#context-window)) | `{"error":{"code":400,"message":"request (N tokens) exceeds the available context size (16384 tokens), ...","type":"exceed_context_size_error","n_prompt_tokens":N,"n_ctx":16384}}` |
 | `401` | Missing, invalid, expired token, or wrong issuer | empty |
 | `404` / `405` | Unknown path / wrong method | plain text |
 | `429` | Rate limit exceeded | empty |
