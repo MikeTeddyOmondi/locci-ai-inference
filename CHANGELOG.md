@@ -61,4 +61,5 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Fit web chats into the model's context and keep attachments readable to it (`91997f2`)
 - Stop pnpm's npm_config variables reaching npx-based MCP servers (`82cda7a`)
 - Size the web context budget from the loaded tools, retry on overflow, and prompt the model to search first (`f5397a3`)
+- web sign-in opens locci-auth's own sign-in page instead of forcing email and password (`d1f8739`)
 
