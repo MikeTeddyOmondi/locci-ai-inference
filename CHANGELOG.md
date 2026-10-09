@@ -48,6 +48,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Give qwen3 a 16k window per request with a q8 KV cache and make the qwen2.5 pool opt-in (`5613cfa`)
 - Plan web searches from the conversation, reuse earlier results, and search thread contents in the API (`a24caf3`)
 - Ursula store appends only and KrakenD /v1/streams forwards to the Ursula gateway (events.locci.cloud, template stack locally) (`6d3c01f`)
+- /v1/streams back to this repo's Ursula service; events.locci.cloud is the production backend (`85856e1`)
 
 ### Fixed
 
