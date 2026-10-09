@@ -17,11 +17,6 @@ import { apiUrl } from '$lib/config';
 const REFRESH_KEY = 'locci-ai.refresh';
 const CHALLENGE_KEY = 'locci-ai.challenge';
 const RETURN_KEY = 'locci-ai.return';
-/**
- * Straight to email and password: `provider` skips the issuer's picker, as the
- * console's login does for GitHub. This app offers no GitHub sign-in.
- */
-const PROVIDER = 'password';
 
 export interface AuthUser {
 	id: string;
@@ -158,7 +153,8 @@ export async function authHeaders(): Promise<Record<string, string>> {
 
 export async function login(): Promise<void> {
 	if (!client) return;
-	const { challenge, url } = await client.authorize(location.origin, 'code', { pkce: true, provider: PROVIDER });
+	// One button here; locci-auth's own page offers its sign-in methods.
+	const { challenge, url } = await client.authorize(location.origin, 'code', { pkce: true });
 	storage('session')?.setItem(CHALLENGE_KEY, JSON.stringify(challenge));
 	storage('session')?.setItem(RETURN_KEY, location.pathname + location.search + location.hash);
 	location.href = url;
