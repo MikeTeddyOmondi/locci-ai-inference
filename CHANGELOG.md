@@ -41,6 +41,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Use canonical Tailwind classes in the chat view (`c260baf`)
 - Move the reference fixes into REFERENCE.md and open issues into BACKLOG.md (`0ca9cd0`)
 - Show the loccibox MCP server's env settings in the example config (`a27ef33`)
+- Give qwen3 a 16k window per request with a q8 KV cache and make the qwen2.5 pool opt-in (`5613cfa`)
 
 ### Fixed
 

@@ -105,7 +105,8 @@ export function inlineAttachments(messages: UIMessage[]): UIMessage[] {
 }
 
 /** An assistant reply that is only a tool call written out as text. */
-const PRINTED_TOOL_CALL = /^\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:[\s\S]*\}\s*$/;
+const PRINTED_TOOL_CALL =
+  /^\s*(<tool_call>\s*)?\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:[\s\S]*\}\s*(<\/tool_call>\s*)?$/;
 
 function isPrintedToolCall(message: UIMessage): boolean {
   const texts = message.parts.filter((p) => p.type === 'text');

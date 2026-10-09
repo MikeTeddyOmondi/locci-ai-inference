@@ -23,6 +23,12 @@ export interface ThreadWithMessages extends Thread {
 
 export type ThreadPatch = Partial<Pick<Thread, 'title' | 'preview' | 'starred'>>;
 
+/** A thread matching a search, with the matching text around the hit. */
+export interface ThreadHit {
+  id: string;
+  snippet: string;
+}
+
 /** What the web example's storage adapter needs; any backend can implement it. */
 export interface ThreadStore {
   list(): Promise<Thread[]>;
@@ -32,6 +38,8 @@ export interface ThreadStore {
   remove(id: string): Promise<void>;
   clear(): Promise<void>;
   syncMessages(id: string, messages: UIMessage[]): Promise<void>;
+  /** Threads whose title or any message contains `query` (case-insensitive), best first. */
+  search(query: string): Promise<ThreadHit[]>;
 }
 
 const SCHEMA = [
@@ -71,6 +79,30 @@ function textOf(message: UIMessage): string {
   const part = message.parts?.find((p) => p.type === 'text');
   return part && 'text' in part ? part.text : '';
 }
+
+/** All of a message's text, pasted attachments included (without their tags): what search looks in. */
+function allTextOf(message: UIMessage): string {
+  return (message.parts ?? [])
+    .map((p) => (p.type === 'text' && 'text' in p ? p.text : ''))
+    .join(' ')
+    .replace(/<\/?attachment[^>]*>/g, ' ');
+}
+
+const SNIPPET_BEFORE = 12;
+const SNIPPET_AFTER = 90;
+
+/** The text around the first match of `needle` (lowercase), or '' when there is none. */
+function snippetAround(text: string, needle: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const at = flat.toLowerCase().indexOf(needle);
+  if (at === -1) return '';
+  const start = Math.max(0, at - SNIPPET_BEFORE);
+  const end = Math.min(flat.length, at + needle.length + SNIPPET_AFTER);
+  return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`;
+}
+
+/** Escape LIKE wildcards so a search for "100%" means the text "100%". */
+const likePattern = (q: string) => `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
 export class LibsqlThreadStore implements ThreadStore {
   private ready: Promise<void>;
@@ -153,7 +185,7 @@ export class LibsqlThreadStore implements ThreadStore {
       { sql: 'DELETE FROM messages WHERE thread_id = ?', args: [id] },
       ...messages.map((msg, position) => ({
         sql: 'INSERT INTO messages (id, thread_id, position, role, content, parts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        args: [msg.id, id, position, msg.role, textOf(msg), JSON.stringify(msg.parts ?? []), now],
+        args: [msg.id, id, position, msg.role, allTextOf(msg), JSON.stringify(msg.parts ?? []), now],
       })),
     ];
     const firstUser = messages.find((m) => m.role === 'user');
@@ -162,5 +194,28 @@ export class LibsqlThreadStore implements ThreadStore {
       args: [now, firstUser ? textOf(firstUser).substring(0, 100) : null, id] as never,
     });
     await this.db.batch(stmts, 'write');
+  }
+
+  /** LIKE is case-insensitive for ASCII in SQLite; the snippet comes from the first matching message. */
+  async search(query: string): Promise<ThreadHit[]> {
+    await this.ready;
+    const needle = query.trim().toLowerCase();
+    if (!needle) return [];
+    const pattern = likePattern(needle);
+    const rs = await this.db.execute({
+      sql: `SELECT t.id AS id, (t.title LIKE ?1 ESCAPE '\\' OR t.preview LIKE ?1 ESCAPE '\\') AS in_title, m.content AS content
+            FROM threads t
+            LEFT JOIN messages m ON m.thread_id = t.id AND m.content LIKE ?1 ESCAPE '\\'
+            WHERE t.title LIKE ?1 ESCAPE '\\' OR t.preview LIKE ?1 ESCAPE '\\' OR m.id IS NOT NULL
+            ORDER BY t.starred DESC, t.updated_at DESC, m.position`,
+      args: [pattern],
+    });
+    const hits = new Map<string, ThreadHit>();
+    for (const r of rs.rows) {
+      const id = String(r.id);
+      if (hits.has(id)) continue;
+      hits.set(id, { id, snippet: Number(r.in_title) ? '' : snippetAround(String(r.content ?? ''), needle) });
+    }
+    return [...hits.values()];
   }
 }

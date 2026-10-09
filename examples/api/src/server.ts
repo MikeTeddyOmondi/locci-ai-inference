@@ -15,8 +15,9 @@ import {
   type ToolSet,
   type UIMessage,
 } from 'ai';
-import { resolveModel, supportsTools } from './provider.js';
+import { contextTokensFor, resolveModel, supportsTools } from './provider.js';
 import { dropPrintedToolCalls, fitToContext, inlineAttachments, overflowRetry } from './context.js';
+import { clearlyNoSearch, earlierSearches, planSearchQuery, relevantResults } from './search-plan.js';
 import { builtinTools, webSystemPrompt } from './tools.js';
 import { LibsqlThreadStore, type ThreadStore } from './threads.js';
 import { onShutdown, installShutdown } from './shutdown.js';
@@ -38,9 +39,33 @@ const { provider, modelId, model, baseURL, modelFor, chatModels } = resolveModel
 
 const SEARCH_MAX_CHARS = Number(process.env.SEARCH_MAX_CHARS) || 4000;
 
+/**
+ * The search rule for the system prompt. With AUTO_SEARCH the API has already
+ * decided, so the model is never told to search, only to use results it has.
+ */
+type SearchState = { searched: boolean; earlier: boolean };
+const searchMode = (toolSet: ToolSet | undefined, s: SearchState) =>
+  s.searched ? 'done' : AUTO_SEARCH || !toolSet?.search ? (s.earlier ? 'earlier' : 'none') : 'available';
+
 /** The web system prompt for a request's tool set (see webSystemPrompt). */
-const webPrompt = (toolSet: ToolSet | undefined) =>
-  webSystemPrompt({ now: new Date(), search: !!toolSet?.search, weather: !!toolSet?.weather });
+const webPrompt = (toolSet: ToolSet | undefined, s: SearchState) =>
+  webSystemPrompt({ now: new Date(), search: searchMode(toolSet, s), weather: !!toolSet?.weather });
+
+/** The system prompt for a step that must answer with no tools. */
+const answerPrompt = (s: SearchState) =>
+  webSystemPrompt({ now: new Date(), search: s.searched ? 'done' : s.earlier ? 'earlier' : 'none', weather: false });
+
+// Web search policy. A 1.7B model doesn't decide reliably when to search
+// (phrasing like "teach me" skips it, "up to date" triggers it), and once it
+// has results it tends to search again with the same query until it runs out
+// of steps. So the API decides: it searches before the model runs, at most
+// once per turn, and the last step always answers.
+const MAX_STEPS = 5;
+const MAX_TOOL_CALLS = 4;
+// AUTO_SEARCH=off restores the model's own choice (plus the UI's toggle).
+const AUTO_SEARCH = process.env.AUTO_SEARCH !== 'off';
+const SMALL_TALK =
+  /^\s*(hi|hello|hey|yo|thanks|thank you|thx|ok|okay|cool|great|nice|bye|good (morning|afternoon|evening|night))\b[\s!.?,]*$/i;
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -108,12 +133,24 @@ if (clashes.length) console.log(`  ↔ MCP tool(s) shadowed by built-ins: ${clas
 const allTools: ToolSet = { ...mcpTools, ...builtin.tools };
 const tools: ToolSet | undefined = Object.keys(allTools).length > 0 ? allTools : undefined;
 
+// The web chat's tools. A 1.7B model handed 19 tools calls whatever looks
+// plausible (the loccibox sandbox to "run" a tutorial, filesystem tools on
+// invented paths), so /api/chat offers only the built-ins by default; the CLI
+// and TUI keep every tool. WEB_TOOLS: a comma list of tool names, or "all".
+const webToolNames = (() => {
+  const setting = (process.env.WEB_TOOLS ?? Object.keys(builtin.tools).join(',')).trim();
+  if (setting === 'all') return Object.keys(allTools);
+  return setting.split(',').map((n) => n.trim()).filter((n) => n in allTools);
+})();
+const webTools: ToolSet | undefined =
+  webToolNames.length > 0 ? Object.fromEntries(webToolNames.map((n) => [n, allTools[n]])) : undefined;
+console.log(`  ✓ web chat tools: ${webToolNames.join(', ') || 'none'}`);
+
 // --- Context budget (web endpoint) ------------------------------------------
 // How much conversation /api/chat can send: the model's window minus what every
 // request already spends on the system prompt and tool schemas (measured from
 // the tools actually loaded, so adding an MCP server shrinks it), plus room for
 // one tool result and the answer. context.ts shortens the conversation to fit.
-const CONTEXT_TOKENS = Number(process.env.MODEL_CONTEXT_TOKENS) || 8192;
 const ANSWER_TOKENS = 1024;
 const TOOL_RESULT_TOKENS = 1024;
 // Measured on qwen3-1.7b: the system prompt and 19 tool schemas (~11.7k
@@ -123,28 +160,34 @@ const SCHEMA_CHARS_PER_TOKEN = 3.9;
 const TEXT_CHARS_PER_TOKEN = 2.5;
 
 async function promptChars(toolSet: ToolSet | undefined): Promise<number> {
-  let n = webPrompt(toolSet).length;
+  // The longest variant of the system prompt.
+  let n = Math.max(
+    ...[false, true].map((searched) => webPrompt(toolSet, { searched, earlier: true }).length),
+  );
   for (const [name, t] of Object.entries(toolSet ?? {})) {
     const parameters = t.inputSchema ? await asSchema(t.inputSchema).jsonSchema : {};
     n += JSON.stringify({ type: 'function', function: { name, description: t.description, parameters } }).length;
   }
   return n;
 }
-const promptCharsWithTools = await promptChars(tools);
+const promptCharsWithTools = await promptChars(webTools);
 const promptCharsWithoutTools = await promptChars(undefined);
 
-/** Characters of conversation that fit, for a request with or without tools. */
-function inputBudget(withTools: boolean): number {
+/** Characters of conversation that fit, for a request to `id` with or without tools. */
+function inputBudget(id: string, withTools: boolean): number {
   const prompt = withTools ? promptCharsWithTools : promptCharsWithoutTools;
   const left =
-    CONTEXT_TOKENS - Math.ceil(prompt / SCHEMA_CHARS_PER_TOKEN) - ANSWER_TOKENS - (withTools ? TOOL_RESULT_TOKENS : 0);
+    contextTokensFor(id) -
+    Math.ceil(prompt / SCHEMA_CHARS_PER_TOKEN) -
+    ANSWER_TOKENS -
+    (withTools ? TOOL_RESULT_TOKENS : 0);
   const chars = Math.floor(Math.max(500, left) * TEXT_CHARS_PER_TOKEN);
   const cap = Number(process.env.MAX_INPUT_CHARS);
   return cap > 0 ? Math.min(chars, cap) : chars;
 }
 console.log(
-  `  ✓ context: ${CONTEXT_TOKENS} tokens; prompt + ${Object.keys(tools ?? {}).length} tool schemas ≈ ` +
-    `${Math.ceil(promptCharsWithTools / SCHEMA_CHARS_PER_TOKEN)} tokens; conversation budget ${inputBudget(!!tools)} characters`,
+  `  ✓ context: ${contextTokensFor(modelId)} tokens per request; prompt + ${webToolNames.length} web tool schemas ≈ ` +
+    `${Math.ceil(promptCharsWithTools / SCHEMA_CHARS_PER_TOKEN)} tokens; conversation budget ${inputBudget(modelId, !!webTools)} characters`,
 );
 
 // --- Optional server-side thread store (libSQL) ----------------------------
@@ -177,7 +220,7 @@ app.get('/info', (_req, res) => {
  */
 app.get('/models', async (_req, res) => {
   try {
-    res.json({ default: modelId, models: await chatModels(), maxInputChars: inputBudget(!!tools && supportsTools(modelId)) });
+    res.json({ default: modelId, models: await chatModels(), maxInputChars: inputBudget(modelId, !!webTools && supportsTools(modelId)) });
   } catch (error) {
     console.error('[models]', describeError(error));
     res.json({
@@ -386,12 +429,30 @@ app.post('/api/chat', async (req, res) => {
     chatModel = modelFor(requested);
     chatModelId = requested;
   }
-  const chatTools = supportsTools(chatModelId) ? tools : undefined;
+  const chatTools = supportsTools(chatModelId) ? webTools : undefined;
 
   // Long pastes and histories are shortened to fit the model's window; the
   // forced web search needs room for its results too.
-  const search = webSearch === true ? chatTools?.search : undefined;
-  const room = inputBudget(!!chatTools);
+  const ask = lastUserText(messages);
+  // Pasted text and files are the source the user wants used: no web search.
+  const attached = lastUserHasAttachment(messages);
+  // The model plans the query from the conversation (search-plan.ts), so a
+  // follow-up like "another example" searches for the right thing, or nothing.
+  // Small talk, attachments, weather, translation and reworking earlier text
+  // skip planning altogether.
+  let query: string | null = null;
+  const skip =
+    attached ||
+    SMALL_TALK.test(ask) ||
+    clearlyNoSearch(ask, { weatherTool: !!chatTools?.weather, hasHistory: messages.length > 1 });
+  if (chatTools?.search && !skip && (AUTO_SEARCH || webSearch === true)) {
+    query = await planSearchQuery(chatModel, messages);
+  }
+  // The composer's "Search the web" toggle always searches, with the raw message if need be.
+  if (webSearch === true && !query && chatTools?.search) query = ask.slice(0, 300) || null;
+  console.log(`  [search] ${query ? `query "${query}"` : 'none'}`);
+  const search = query ? chatTools?.search : undefined;
+  const room = inputBudget(chatModelId, !!chatTools);
   const budget = search ? Math.max(1000, room - SEARCH_MAX_CHARS) : room;
   const fitted = fitToContext(dropPrintedToolCalls(messages), budget);
   if (fitted.trimmed) console.log(`  [context] conversation shortened to fit ${budget} characters`);
@@ -401,13 +462,35 @@ app.post('/api/chat', async (req, res) => {
     model: chatModel as Exclude<LanguageModel, string>,
     middleware: overflowRetry(ANSWER_TOKENS),
   });
-  const stream = (history: ModelMessage[]) =>
+  const toolNames = Object.keys(chatTools ?? {});
+  const withoutSearch = toolNames.filter((name) => name !== 'search');
+  // Results from earlier turns stay in the history, so a follow-up the planner
+  // judged covered is answered from them.
+  const earlier = earlierSearches(fitted.messages).length > 0;
+  const stream = (history: ModelMessage[], searchedFirst: boolean) =>
     streamText({
       model: guardedModel,
-      system: webPrompt(chatTools),
+      system: webPrompt(chatTools, { searched: searchedFirst, earlier }),
       messages: history,
-      stopWhen: stepCountIs(5),
+      stopWhen: stepCountIs(MAX_STEPS),
       tools: chatTools,
+      prepareStep: ({ stepNumber, steps }) => {
+        const calls = steps.flatMap((s) => s.toolCalls);
+        const searched = searchedFirst || calls.some((call) => call.toolName === 'search');
+        // Answer now: on the last step, after MAX_TOOL_CALLS calls (a model can
+        // make several per step), or when the user attached the source to read.
+        // The tools are removed, not just switched off: with their schemas still in
+        // the prompt the model writes a <tool_call> out as text instead.
+        if (stepNumber >= MAX_STEPS - 1 || calls.length >= MAX_TOOL_CALLS || attached) {
+          return { activeTools: [], toolChoice: 'none', system: answerPrompt({ searched, earlier }) };
+        }
+        // One search per turn, and with AUTO_SEARCH only the one the API ran.
+        if (!searched && !AUTO_SEARCH) return {};
+        return {
+          activeTools: withoutSearch,
+          system: webPrompt(chatTools, { searched, earlier }),
+        };
+      },
       onError: ({ error }) => console.error('[stream error]', describeError(error)),
     });
 
@@ -416,7 +499,7 @@ app.post('/api/chat', async (req, res) => {
   // API runs the search itself, streams it to the UI as a normal tool call,
   // and hands the model the results to answer from.
   if (!search?.execute) {
-    stream(modelMessages).pipeUIMessageStreamToResponse(res, {
+    stream(modelMessages, false).pipeUIMessageStreamToResponse(res, {
       // Surface the real reason in the client's chat.error instead of the
       // SDK's generic "An error occurred."
       onError: (error) => describeError(error),
@@ -429,7 +512,7 @@ app.post('/api/chat', async (req, res) => {
     onError: (error) => describeError(error),
     execute: async ({ writer }) => {
       const toolCallId = generateId();
-      const input = { query: lastUserText(fitted.messages).slice(0, 300), limit: 3 };
+      const input = { query: query ?? ask, limit: 3 };
       writer.write({ type: 'start' });
       writer.write({ type: 'start-step' });
       writer.write({ type: 'tool-input-available', toolCallId, toolName: 'search', input });
@@ -437,7 +520,10 @@ app.post('/api/chat', async (req, res) => {
       let output: unknown;
       let errorText: string | undefined;
       try {
-        output = await runSearch(input as never, { toolCallId, messages: modelMessages, context: undefined });
+        output = relevantResults(
+          input.query,
+          await runSearch(input as never, { toolCallId, messages: modelMessages, context: undefined }),
+        );
         writer.write({ type: 'tool-output-available', toolCallId, output });
       } catch (error) {
         errorText = describeError(error);
@@ -463,11 +549,17 @@ app.post('/api/chat', async (req, res) => {
           ],
         },
       ];
-      writer.merge(stream(history).toUIMessageStream({ sendStart: false }));
+      writer.merge(stream(history, true).toUIMessageStream({ sendStart: false, onError: (error) => describeError(error) }));
     },
   });
   pipeUIMessageStreamToResponse({ response: res, stream: uiStream });
 });
+
+/** Whether the user's latest message carries an attached file or long paste. */
+function lastUserHasAttachment(messages: UIMessage[]): boolean {
+  const last = [...messages].reverse().find((m) => m.role === 'user');
+  return (last?.parts ?? []).some((p) => p.type === 'text' && p.text.startsWith('<attachment '));
+}
 
 /** The user's latest message as plain text (attached files left out), for a search query. */
 function lastUserText(messages: UIMessage[]): string {
@@ -498,6 +590,9 @@ threads.post('/', async (req, res) => {
 threads.delete('/', async (_req, res) => {
   await store().clear();
   res.json({ success: true });
+});
+threads.get('/search', async (req, res) => {
+  res.json(await store().search(String(req.query.q ?? '')));
 });
 threads.get('/:id', async (req, res) => {
   const thread = await store().get(req.params.id);

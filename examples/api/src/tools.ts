@@ -36,10 +36,31 @@ interface FirecrawlSearchResponse {
  * rules are included only for tools the request actually has: a model told to
  * use a search tool it was not given prints a fake call as text instead.
  */
-export function webSystemPrompt(opts: { now: Date; search: boolean; weather: boolean }): string {
+export function webSystemPrompt(opts: {
+  now: Date;
+  /**
+   * `available`: the model may call search; `done`: results for this question are in the conversation;
+   * `earlier`: no search this turn, but earlier turns' results are in the conversation.
+   */
+  search: 'available' | 'done' | 'earlier' | 'none';
+  weather: boolean;
+}): string {
   const today = opts.now.toISOString().slice(0, 10);
   const rules: string[] = [];
-  if (opts.search) {
+  if (opts.search === 'done') {
+    rules.push(
+      "Web search results for the user's question are already in this conversation, as a search tool " +
+        'result. Answer from them, not from memory, and give a full answer. If they disagree with what you ' +
+        'remember, trust the results. Name the sources (site or URL) you used.',
+      "If the results don't cover the question, say so, then answer from memory and warn that it may be " +
+        'out of date.',
+    );
+  } else if (opts.search === 'earlier') {
+    rules.push(
+      'Web search results from earlier in this conversation are included as search tool results. Where they ' +
+        'cover the question, answer from them, not from memory, and name the sources (site or URL) you used.',
+    );
+  } else if (opts.search === 'available') {
     rules.push(
       'Your own knowledge is out of date. For any question that depends on facts, technical or not ' +
         '(libraries, frameworks, APIs, versions, releases, docs, error messages; news, people, companies, ' +
