@@ -20,7 +20,7 @@ import { contextTokensFor, resolveModel, supportsTools } from './provider.js';
 import { dropPrintedToolCalls, fitToContext, inlineAttachments, overflowRetry } from './context.js';
 import { clearlyNoSearch, earlierSearches, planSearchQuery, relevantResults } from './search-plan.js';
 import { builtinTools, webSystemPrompt } from './tools.js';
-import { LibsqlThreadStore, type ThreadStore } from './threads.js';
+import { LibsqlThreadStore, type ThreadStore, type ThreadWithMessages } from './threads.js';
 import { onShutdown, installShutdown } from './shutdown.js';
 import { connectMcpServers, hasMcpConfig, mcpConfigPath, type McpServerStatus } from './mcp.js';
 import { resumableStreams, THREAD_ID, type Recorder } from './resumable/index.js';
@@ -749,6 +749,17 @@ threads.use((_req, res, next) => {
 const store = (res: Response): ThreadStore => (threadStore as LibsqlThreadStore).forOwner(userOf(res).id);
 threads.get('/', async (_req, res) => {
   res.json(await store(res).list());
+});
+/** Bring in a thread made elsewhere (the web app's chats from before sign-in), keeping its id and dates. */
+threads.post('/import', async (req, res) => {
+  const thread = req.body as ThreadWithMessages | undefined;
+  if (!thread || typeof thread.id !== 'string' || !THREAD_ID.test(thread.id) || !Array.isArray(thread.messages)) {
+    res.status(400).json({ error: 'Body must be a thread with an id and messages' });
+    return;
+  }
+  const result = await store(res).importThread(thread);
+  if (result === 'taken') res.status(409).json({ error: 'thread id belongs to another user' });
+  else res.status(result === 'imported' ? 201 : 200).json({ result });
 });
 threads.post('/', async (req, res) => {
   res.status(201).json(await store(res).create(req.body ?? {}));

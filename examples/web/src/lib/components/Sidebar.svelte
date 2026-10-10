@@ -4,6 +4,7 @@
 	import { Ellipsis, LogOut, MessagesSquare, PanelLeft, PanelLeftClose, Pencil, Pin, PinOff, Search, Settings, SquarePen, Trash2, X } from '@lucide/svelte';
 	import { Blobatar } from '@blobatar/svelte';
 	import { auth, logout } from '$lib/state/auth.svelte';
+	import { anonymousChats, importAnonymousChats } from '$lib/state/anonymousChats.svelte';
 	import { brand } from '$lib/brand';
 	import {
 		conversationState,
@@ -248,6 +249,24 @@
 				</Button>
 			{/if}
 		</div>
+
+		{#if anonymousChats.count > 0}
+			<!-- Chats this browser kept before sign-in drop out of sight once signed in; offer to bring them over. -->
+			<div class="mx-3 mt-3 rounded-xl border bg-background p-3 text-sm">
+				<p class="text-muted-foreground">
+					{anonymousChats.count} chat{anonymousChats.count === 1 ? '' : 's'} from before you signed in
+				</p>
+				<Button
+					variant="outline"
+					size="sm"
+					class="mt-2 w-full rounded-full"
+					onclick={importAnonymousChats}
+					disabled={anonymousChats.importing}
+				>
+					{anonymousChats.importing ? 'Importing…' : 'Import into my chats'}
+				</Button>
+			</div>
+		{/if}
 
 		<div class="mt-4 min-h-0 flex-1 scroll-fade overflow-y-auto px-3 pb-3" bind:this={listArea}>
 			{#if conversationState.isLoading && conversationState.threads.length === 0}

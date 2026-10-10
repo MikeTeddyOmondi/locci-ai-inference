@@ -43,6 +43,12 @@ export interface ThreadStore {
   syncMessages(id: string, messages: UIMessage[]): Promise<boolean>;
   /** Threads whose title or any message contains `query` (case-insensitive), best first. */
   search(query: string): Promise<ThreadHit[]>;
+  /**
+   * Add a thread made elsewhere (the web app moving chats a browser kept before
+   * sign-in), keeping its id, title, pin and dates. 'exists' if this owner has
+   * it already, 'taken' if the id belongs to someone else.
+   */
+  importThread(thread: ThreadWithMessages): Promise<'imported' | 'exists' | 'taken'>;
 }
 
 const SCHEMA = [
@@ -188,6 +194,28 @@ export class LibsqlThreadStore implements ThreadStore {
     });
     const rs = await this.db.execute({ sql: 'SELECT * FROM threads WHERE id = ? AND owner = ?', args: [id, this.owner] });
     return rs.rows[0] ? toThread(rs.rows[0] as Row) : null;
+  }
+
+  async importThread(thread: ThreadWithMessages): Promise<'imported' | 'exists' | 'taken'> {
+    await this.ready;
+    const found = await this.db.execute({ sql: 'SELECT owner FROM threads WHERE id = ?', args: [thread.id] });
+    if (found.rows.length > 0) return String(found.rows[0].owner) === this.owner ? 'exists' : 'taken';
+    const now = new Date().toISOString();
+    const createdAt = thread.createdAt || now;
+    await this.db.batch(
+      [
+        {
+          sql: 'INSERT INTO threads (id, owner, title, preview, starred, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          args: [thread.id, this.owner, thread.title ?? '', thread.preview ?? '', thread.starred ? 1 : 0, createdAt, thread.updatedAt || createdAt],
+        },
+        ...(thread.messages ?? []).map((msg, position) => ({
+          sql: 'INSERT INTO messages (id, thread_id, position, role, content, parts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          args: [msg.id, thread.id, position, msg.role, allTextOf(msg), JSON.stringify(msg.parts ?? []), createdAt],
+        })),
+      ],
+      'write',
+    );
+    return 'imported';
   }
 
   async remove(id: string): Promise<void> {

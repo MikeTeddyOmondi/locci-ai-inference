@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { env } from '$env/dynamic/public';
 	import { Blobatar } from '@blobatar/svelte';
-	import { Check, Copy, Download, LogOut, Monitor, Moon, Sun, Trash2 } from '@lucide/svelte';
+	import { Check, Copy, Download, Import, LogOut, Monitor, Moon, Sun, Trash2 } from '@lucide/svelte';
+	import { anonymousChats, importAnonymousChats } from '$lib/state/anonymousChats.svelte';
 	import { setMode, userPrefersMode } from 'mode-watcher';
 	import { brand } from '$lib/brand';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -170,6 +171,34 @@
 						</p>
 					</div>
 				</div>
+				{#if auth.user && (anonymousChats.count > 0 || anonymousChats.imported > 0)}
+					<Separator />
+					<div class="flex items-center justify-between gap-4 p-4">
+						<div>
+							<p class="text-sm">Chats from before you signed in</p>
+							<p class="text-xs text-muted-foreground">
+								{#if anonymousChats.count > 0}
+									{anonymousChats.count} chat{anonymousChats.count === 1 ? '' : 's'} saved in this browser without an account. Import moves
+									them into your chats.
+								{:else}
+									Imported {anonymousChats.imported} chat{anonymousChats.imported === 1 ? '' : 's'}.
+								{/if}
+								{#if anonymousChats.failed > 0}{anonymousChats.failed} could not be imported and stayed where they were.{/if}
+							</p>
+						</div>
+						{#if anonymousChats.count > 0}
+							<Button
+								variant="outline"
+								class="h-9 rounded-full px-4"
+								onclick={importAnonymousChats}
+								disabled={anonymousChats.importing}
+							>
+								<Import />
+								{anonymousChats.importing ? 'Importing…' : 'Import'}
+							</Button>
+						{/if}
+					</div>
+				{/if}
 				<Separator />
 				<div class="flex items-center justify-between gap-4 p-4">
 					<div>

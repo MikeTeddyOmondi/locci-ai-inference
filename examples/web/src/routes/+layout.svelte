@@ -11,6 +11,7 @@
 	import TopBar from '$lib/components/TopBar.svelte';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import * as Tooltip from '$lib/components/ui/tooltip';
+	import { checkAnonymousChats } from '$lib/state/anonymousChats.svelte';
 	import { auth, initAuth } from '$lib/state/auth.svelte';
 	import { loadThreads } from '$lib/state/conversationState.svelte';
 	import { loadApiInfo, ui } from '$lib/state/ui.svelte';
@@ -26,6 +27,7 @@
 		if (auth.mode === 'locci' && !auth.user) return;
 		loadThreads();
 		loadApiInfo();
+		if (auth.user) checkAnonymousChats();
 	});
 
 	const signedIn = $derived(auth.mode === 'off' || auth.user !== null);

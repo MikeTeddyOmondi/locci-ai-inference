@@ -48,6 +48,8 @@ export interface ThreadStore {
 	syncMessages(id: string, messages: UIMessage[]): Promise<void>;
 	/** Threads whose title or any message contains `query` (case-insensitive), best first. */
 	search(query: string): Promise<ThreadHit[]>;
+	/** Add a thread from another store, keeping its id, title, pin and dates; a no-op if it is already here. */
+	importThread(thread: ThreadWithMessages): Promise<void>;
 }
 
 /** First text part of a message, as the original getMessageContent. */
@@ -172,6 +174,15 @@ export class LocalbaseThreadStore implements ThreadStore {
 		return updated;
 	}
 
+	importThread(thread: ThreadWithMessages): Promise<void> {
+		return this.serial(async () => {
+			if (await this.db.collection('threads').doc({ id: thread.id }).get()) return;
+			const { messages, ...rest } = JSON.parse(JSON.stringify(thread)) as ThreadWithMessages;
+			await this.db.collection('threads').add({ ...rest, starred: !!rest.starred });
+			await this.db.collection('messages').add({ id: thread.id, messages: messages ?? [] });
+		});
+	}
+
 	remove(id: string): Promise<void> {
 		return this.serial(async () => {
 			await this.db.collection('threads').doc({ id }).delete();
@@ -261,6 +272,28 @@ export class ApiThreadStore implements ThreadStore {
 	};
 	search = async (query: string) =>
 		query.trim() ? this.call<ThreadHit[]>(`/search?q=${encodeURIComponent(query.trim())}`) : [];
+	importThread = async (thread: ThreadWithMessages) => {
+		await this.call('/import', { method: 'POST', body: JSON.stringify(thread) });
+	};
+}
+
+/** The browser database chats were kept in when nobody was signed in. */
+export const ANONYMOUS_DB = 'locci-chat';
+
+/**
+ * The signed-in user's way back to chats this browser kept before sign-in (the
+ * anonymous database), or null when nobody is signed in or there is none.
+ * Other accounts' databases are never offered: a shared browser stays private.
+ */
+export async function anonymousBrowserStore(): Promise<LocalbaseThreadStore | null> {
+	if (!auth.user) return null;
+	try {
+		const names = (await indexedDB.databases()).map((d) => d.name);
+		if (!names.includes(ANONYMOUS_DB)) return null;
+	} catch {
+		// No databases() (older browsers): open it and let list() find nothing.
+	}
+	return new LocalbaseThreadStore(ANONYMOUS_DB);
 }
 
 let store: ThreadStore | null = null;
