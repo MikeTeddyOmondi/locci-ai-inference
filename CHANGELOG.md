@@ -36,6 +36,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - blobatar beside the signed-in email and an Account card (blobatar, email, tenant ID) at the top of Settings (`4b590cd`)
 - Document resumable replies and Ursula durability in docs/RESUMABILITY.md (`1fac275`)
 - bearer auth on /chat with AUTH=locci; the CLI and TUI send LOCCI_ACCESS_TOKEN or an exchanged LOCCI_API_KEY (`baf9aca`)
+- import chats a browser kept before sign-in into the signed-in user's chats (`7586e37`)
 
 ### Changed
 
