@@ -35,6 +35,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Document web sign-in and add the AUTH=locci check to examples-check (`7ad045b`)
 - blobatar beside the signed-in email and an Account card (blobatar, email, tenant ID) at the top of Settings (`4b590cd`)
 - Document resumable replies and Ursula durability in docs/RESUMABILITY.md (`1fac275`)
+- bearer auth on /chat with AUTH=locci; the CLI and TUI send LOCCI_ACCESS_TOKEN or an exchanged LOCCI_API_KEY (`baf9aca`)
 
 ### Changed
 
