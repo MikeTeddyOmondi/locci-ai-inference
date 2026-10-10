@@ -44,7 +44,7 @@ function assert(cond, message) {
 async function events(messages) {
   const res = await fetch(`${API}/chat?events=1`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...webAuth },
     body: JSON.stringify({ messages }),
   });
   assert(res.ok, `HTTP ${res.status}`);
@@ -83,11 +83,11 @@ try {
 }
 const hasTool = (name) => info.toolNames.includes(name);
 
-// AUTH=locci on the API: the web routes need a Locci token. Use LOCCI_ACCESS_TOKEN,
+// AUTH=locci on the API: /chat and the web routes need a Locci token. Use LOCCI_ACCESS_TOKEN,
 // or exchange LOCCI_API_KEY (from the environment or examples/api/.env).
 let webAuth = {};
 if (info.auth === 'locci') {
-  await check('web auth: /api routes need a Locci token', async () => {
+  await check('auth: /chat and /api routes need a Locci token', async () => {
     const env = { ...apiEnv(), ...process.env };
     let token = env.LOCCI_ACCESS_TOKEN;
     if (!token) {
@@ -107,9 +107,11 @@ if (info.auth === 'locci') {
     assert(bad.status === 401, `bad token: HTTP ${bad.status}`);
     const ok = await fetch(url, { headers: webAuth });
     assert(ok.status === 204, `with token: HTTP ${ok.status}`);
-    return 'no token 401, bad token 401, valid token accepted';
+    const cli = await fetch(`${API}/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"messages":[]}' });
+    assert(cli.status === 401, `/chat without a token: HTTP ${cli.status}`);
+    return 'no token 401 (/chat too), bad token 401, valid token accepted';
   });
-} else skip('web auth', 'AUTH=off on the API');
+} else skip('auth', 'AUTH=off on the API');
 
 /** KEY=value lines of examples/api/.env, if it exists. */
 function apiEnv() {
@@ -228,7 +230,8 @@ await check('cli ask --json', async () => {
     out = execFileSync('pnpm', ['--filter', '@locci/example-ai-cli', 'run', '-s', 'ask', '--json', 'Reply with exactly: pong'], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, API_URL: API },
+      // The CLI sends LOCCI_ACCESS_TOKEN as its bearer (AUTH=locci).
+      env: { ...process.env, API_URL: API, ...(webAuth.authorization ? { LOCCI_ACCESS_TOKEN: webAuth.authorization.slice(7) } : {}) },
     });
   } catch (err) {
     // `ask` exits 1 on a stream error or an empty answer; its JSON says which.

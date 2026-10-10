@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
+import { authHeaders, explain401 } from './auth.js';
 
 // Ported from locci-chat-cli's src/cli.ts. A pure client of the example API
 // (examples/api), which talks to the Locci AI Gateway through @locci/ai-sdk.
@@ -38,13 +39,13 @@ async function streamChat(
 ): Promise<void> {
   const res = await fetch(`${API}/chat?events=1`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...(await authHeaders()) },
     body: JSON.stringify({ messages, system }),
     signal,
   });
   if (!res.ok || !res.body) {
     const errText = await res.text().catch(() => '');
-    throw new Error(`${res.status} ${res.statusText} ${errText}`.trim());
+    throw new Error(`${res.status} ${res.statusText} ${errText}${explain401(res.status)}`.trim());
   }
 
   const reader = res.body.getReader();

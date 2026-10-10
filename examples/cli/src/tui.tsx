@@ -3,6 +3,7 @@ import { createCliRenderer } from '@opentui/core';
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Markdown } from './markdown.js';
+import { authHeaders, explain401 } from './auth.js';
 
 const API = process.env.API_URL ?? 'http://localhost:3939';
 const SYSTEM = process.env.SYSTEM_PROMPT;
@@ -398,13 +399,13 @@ function App() {
     try {
       const res = await fetch(`${API}/chat?events=1`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({ messages: base, system: SYSTEM }),
       });
 
       if (!res.ok || !res.body) {
         const errText = await res.text().catch(() => '');
-        fail(`⚠️  ${res.status} ${res.statusText} ${errText}`.trim());
+        fail(`⚠️  ${res.status} ${res.statusText} ${errText}${explain401(res.status)}`.trim());
         return;
       }
 

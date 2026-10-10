@@ -395,7 +395,7 @@ function summarize(output: unknown): string {
  *   { "t": "finish",     "reason": "stop", "usage": { … } }
  *   { "t": "error",      "v": "…" }
  */
-app.post('/chat', async (req, res) => {
+app.post('/chat', requireUser, async (req, res) => {
   const { messages, system } = req.body as {
     messages?: ModelMessage[];
     system?: string;
