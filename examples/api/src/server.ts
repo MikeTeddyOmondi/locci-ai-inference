@@ -16,8 +16,8 @@ import {
   type ToolSet,
   type UIMessage,
 } from 'ai';
-import { contextTokensFor, resolveModel, supportsTools } from './provider.js';
-import { dropPrintedToolCalls, fitToContext, inlineAttachments, overflowRetry } from './context.js';
+import { contextTokensFor, resolveModel, supportsImages, supportsTools } from './provider.js';
+import { describeImages, dropPrintedToolCalls, fitToContext, hasImage, inlineAttachments, overflowRetry } from './context.js';
 import { clearlyNoSearch, earlierSearches, planSearchQuery, relevantResults } from './search-plan.js';
 import { builtinTools, webSystemPrompt } from './tools.js';
 import { LibsqlThreadStore, type ThreadStore, type ThreadWithMessages } from './threads.js';
@@ -71,7 +71,8 @@ const SMALL_TALK =
   /^\s*(hi|hello|hey|yo|thanks|thank you|thx|ok|okay|cool|great|nice|bye|good (morning|afternoon|evening|night))\b[\s!.?,]*$/i;
 
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+// Web chats carry their photos (resized in the browser) in every request's history.
+app.use(express.json({ limit: '25mb' }));
 
 // --- CORS for the web example ----------------------------------------------
 // The web app is a static client on its own origin (Vite dev server on :5173 by
@@ -502,6 +503,13 @@ app.post('/api/chat', requireUser, async (req, res) => {
     chatModelId = requested;
   }
   const chatTools = supportsTools(chatModelId) ? webTools : undefined;
+  // A photo sent to a model that can't see it would be dropped silently; say so
+  // instead. Photos earlier in the thread become notes (describeImages below).
+  const seesImages = supportsImages(chatModelId);
+  if (!seesImages && hasImage([...messages].reverse().find((m) => m.role === 'user'))) {
+    res.status(400).json({ error: `${chatModelId} can't read images. Pick a model that can, such as gemma-4-e2b.` });
+    return;
+  }
 
   // Resumable replies (web chats send their thread id; the CLI and temporary
   // chats don't, and are never recorded). The recording starts with this
@@ -552,7 +560,7 @@ app.post('/api/chat', requireUser, async (req, res) => {
   // forced web search needs room for its results too.
   const ask = lastUserText(messages);
   // Pasted text and files are the source the user wants used: no web search.
-  const attached = lastUserHasAttachment(messages);
+  const attached = lastUserHasAttachment(messages) || hasImage([...messages].reverse().find((m) => m.role === 'user'));
   // The model plans the query from the conversation (search-plan.ts), so a
   // follow-up like "another example" searches for the right thing, or nothing.
   // Small talk, attachments, weather, translation and reworking earlier text
@@ -571,7 +579,7 @@ app.post('/api/chat', requireUser, async (req, res) => {
   const search = query ? chatTools?.search : undefined;
   const room = inputBudget(chatModelId, !!chatTools);
   const budget = search ? Math.max(1000, room - SEARCH_MAX_CHARS) : room;
-  const fitted = fitToContext(dropPrintedToolCalls(messages), budget);
+  const fitted = fitToContext(dropPrintedToolCalls(seesImages ? messages : describeImages(messages)), budget);
   if (fitted.trimmed) console.log(`  ${tag}[context] conversation shortened to fit ${budget} characters`);
   const modelMessages = await convertToModelMessages(inlineAttachments(fitted.messages));
   // Retry once, shortened, if the model still rejects the prompt as too long.
@@ -719,7 +727,7 @@ app.delete('/api/chat/:threadId/stream', requireUser, (req, res) => {
   res.status(204).end();
 });
 
-/** Whether the user's latest message carries an attached file or long paste. */
+/** Whether the user's latest message carries an attached file or long paste (photos: hasImage). */
 function lastUserHasAttachment(messages: UIMessage[]): boolean {
   const last = [...messages].reverse().find((m) => m.role === 'user');
   return (last?.parts ?? []).some((p) => p.type === 'text' && p.text.startsWith('<attachment '));

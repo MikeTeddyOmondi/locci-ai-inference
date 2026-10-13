@@ -43,6 +43,8 @@ export interface ChatModel {
 	description: string;
 	/** Can call tools; "Search the web" needs this. */
 	tools: boolean;
+	/** Reads photos; "Add photos" needs this. */
+	images?: boolean;
 	/** Listed but not selectable yet (e.g. needs images). */
 	disabled?: boolean;
 }

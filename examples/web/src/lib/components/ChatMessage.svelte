@@ -10,6 +10,7 @@
 	import { codeCopy, renderMarkdown } from '$lib/markdown.svelte';
 	import CollapsibleText from './CollapsibleText.svelte';
 	import FileChip from './FileChip.svelte';
+	import ImageChip from './ImageChip.svelte';
 	import IconButton from './IconButton.svelte';
 
 	interface Props {
@@ -138,9 +139,11 @@
 	</div>
 {:else if isUser}
 	<div class="group flex flex-col items-end gap-1.5">
-		<!-- Attached files and long pastes first, then the message itself. -->
+		<!-- Photos, attached files and long pastes first, then the message itself. -->
 		{#each message.parts as part, i (i)}
-			{#if part.type === 'text'}
+			{#if part.type === 'file' && part.mediaType.startsWith('image/')}
+				<ImageChip name={part.filename ?? 'Image'} url={part.url} />
+			{:else if part.type === 'text'}
 				{@const attachment = part.text.match(ATTACHMENT_RE)}
 				{#if attachment}
 					<div class="max-w-[85%] min-w-0 sm:max-w-80">

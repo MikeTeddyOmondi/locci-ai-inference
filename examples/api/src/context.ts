@@ -20,6 +20,12 @@ import type { LanguageModelMiddleware, UIMessage } from 'ai';
 type Part = UIMessage['parts'][number];
 
 const KEEP_AT_LEAST = 500;
+/**
+ * What one image costs, in the budget's characters. Gemma 4 E2B encodes the
+ * web client's resized images into 125 to 300 tokens; 300 tokens at about 2.5
+ * characters each, rounded up.
+ */
+const IMAGE_CHARS = 800;
 const ATTACHMENT = /^(<attachment name="[^"]*">\n?)([\s\S]*?)(\n?<\/attachment>)$/;
 
 function lastUserIndex(messages: UIMessage[]): number {
@@ -33,6 +39,7 @@ function partSize(part: Part): number {
     const p = part as { input?: unknown; output?: unknown };
     return JSON.stringify(p.input ?? null).length + JSON.stringify(p.output ?? null).length;
   }
+  if (isImage(part)) return IMAGE_CHARS;
   return 0;
 }
 
@@ -102,6 +109,35 @@ export function inlineAttachments(messages: UIMessage[]): UIMessage[] {
     const ask = rest.length > 0 ? rest : [{ type: 'text' as const, text: 'Please look at the text above.' }];
     return { ...message, parts: [...attached, ...ask] };
   });
+}
+
+function isImage(part: Part): part is Extract<Part, { type: 'file' }> {
+  return part.type === 'file' && part.mediaType.startsWith('image/');
+}
+
+/** Whether a message carries an image. */
+export function hasImage(message: UIMessage | undefined): boolean {
+  return (message?.parts ?? []).some(isImage);
+}
+
+/**
+ * For a model that can't read images (the user switched models in a thread
+ * with photos): each image becomes a one-line note, so the model knows there
+ * was one instead of answering as if the user sent nothing.
+ */
+export function describeImages(messages: UIMessage[]): UIMessage[] {
+  return messages.map((message) =>
+    hasImage(message)
+      ? {
+          ...message,
+          parts: message.parts.map((part): Part =>
+            isImage(part)
+              ? { type: 'text', text: `[The user attached an image${part.filename ? ` (${part.filename})` : ''}, which this model cannot see.]` }
+              : part,
+          ),
+        }
+      : message,
+  );
 }
 
 /** An assistant reply that is only a tool call written out as text. */

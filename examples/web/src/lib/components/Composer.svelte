@@ -1,4 +1,6 @@
 <script lang="ts" module>
+	import type { ImageAttachment } from '$lib/images';
+
 	/** A text file read in the browser and sent to the model as context. */
 	export interface Attachment {
 		id: string;
@@ -10,6 +12,7 @@
 	export interface ComposerSubmit {
 		text: string;
 		attachments: Attachment[];
+		images: ImageAttachment[];
 		webSearch: boolean;
 	}
 </script>
@@ -18,12 +21,13 @@
 	import { ArrowUp, Globe, Image, Mic, Paperclip, Plus, Square, X } from '@lucide/svelte';
 	import { onDestroy } from 'svelte';
 	import { brand } from '$lib/brand';
-	import { Badge } from '$lib/components/ui/badge';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { currentModel, ui } from '$lib/state/ui.svelte';
+	import { IMAGE_ACCEPT, prepareImage } from '$lib/images';
 	import FileChip from './FileChip.svelte';
 	import IconButton from './IconButton.svelte';
+	import ImageChip from './ImageChip.svelte';
 	import ModelPicker from './ModelPicker.svelte';
 
 	interface Props {
@@ -37,7 +41,7 @@
 
 	const { onSubmit, onStop, busy = false, disabled = false, autofocus = false }: Props = $props();
 
-	// Files the model can read as text. Images need a vision model (coming later).
+	// Files the model can read as text. Photos go separately, to models that read images.
 	const TEXT_EXTENSIONS =
 		'.txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.toml,.xml,.html,.css,.js,.mjs,.ts,.tsx,.jsx,.svelte,.py,.go,.rs,.java,.kt,.rb,.php,.c,.h,.cpp,.cs,.sh,.sql,.log,.env.example';
 	const MAX_FILES = 5;
@@ -50,7 +54,13 @@
 
 	let text = $state('');
 	let attachments = $state<Attachment[]>([]);
+	let images = $state<ImageAttachment[]>([]);
 	let webSearch = $state(false);
+	// Photos need a model that reads images; unknown (list not loaded) counts as not.
+	const canSeeImages = $derived(currentModel()?.images ?? false);
+	/** Photos are attached but the picked model can't read them: Send waits for a switch. */
+	const needsImageModel = $derived(images.length > 0 && !canSeeImages);
+	let dragging = $state(false);
 	// Web search runs as a tool call, so it only applies to models with tools.
 	// Unknown (list not loaded yet) counts as capable; the API decides anyway.
 	const canUseTools = $derived(currentModel()?.tools ?? true);
@@ -58,8 +68,12 @@
 	let notice = $state('');
 	let textarea: HTMLTextAreaElement | undefined = $state();
 	let fileInput: HTMLInputElement | undefined = $state();
+	let imageInput: HTMLInputElement | undefined = $state();
 
-	const canSend = $derived(!disabled && !busy && (text.trim().length > 0 || attachments.length > 0));
+	const fileCount = $derived(attachments.length + images.length);
+	const canSend = $derived(
+		!disabled && !busy && !needsImageModel && (text.trim().length > 0 || fileCount > 0)
+	);
 
 	$effect(() => {
 		if (autofocus && textarea && !disabled) textarea.focus({ preventScroll: true });
@@ -83,13 +97,19 @@
 		}
 	}
 
-	/** Large pastes become an attachment chip instead of flooding the text box. */
+	/** Large pastes become an attachment chip instead of flooding the text box; pasted images attach. */
 	function onPaste(e: ClipboardEvent) {
+		const pastedImages = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
+		if (pastedImages.length > 0) {
+			e.preventDefault();
+			void addImages(pastedImages);
+			return;
+		}
 		const pasted = e.clipboardData?.getData('text/plain') ?? '';
 		const lines = pasted.split('\n').length;
 		if (pasted.length < PASTE_AS_FILE_CHARS && lines < PASTE_AS_FILE_LINES) return;
 		e.preventDefault();
-		if (attachments.length >= MAX_FILES) {
+		if (fileCount >= MAX_FILES) {
 			flash(`Up to ${MAX_FILES} files per message.`);
 			return;
 		}
@@ -114,9 +134,15 @@
 
 	async function submit() {
 		if (!canSend) return;
-		const payload: ComposerSubmit = { text: text.trim(), attachments: [...attachments], webSearch: searchOn };
+		const payload: ComposerSubmit = {
+			text: text.trim(),
+			attachments: [...attachments],
+			images: [...images],
+			webSearch: searchOn
+		};
 		text = '';
 		attachments = [];
+		images = [];
 		stopListening();
 		await onSubmit(payload);
 		textarea?.focus({ preventScroll: true });
@@ -134,10 +160,10 @@
 		}
 	}
 
-	async function addFiles(list: FileList | null) {
+	async function addFiles(list: FileList | File[] | null) {
 		if (!list) return;
 		for (const file of Array.from(list)) {
-			if (attachments.length >= MAX_FILES) {
+			if (fileCount >= MAX_FILES) {
 				flash(`Up to ${MAX_FILES} files per message.`);
 				break;
 			}
@@ -154,6 +180,46 @@
 
 	function removeAttachment(id: string) {
 		attachments = attachments.filter((a) => a.id !== id);
+	}
+
+	/** Photos are resized in the browser (lib/images.ts) before they are attached. */
+	async function addImages(list: FileList | File[] | null) {
+		if (!list) return;
+		if (!canSeeImages) flash('This model can\'t read photos. Pick one that can, such as gemma-4-e2b.');
+		for (const file of Array.from(list)) {
+			if (fileCount >= MAX_FILES) {
+				flash(`Up to ${MAX_FILES} files per message.`);
+				break;
+			}
+			try {
+				images.push(await prepareImage(file));
+			} catch {
+				flash(`${file.name || 'That image'} couldn't be read.`);
+			}
+		}
+		if (imageInput) imageInput.value = '';
+	}
+
+	function removeImage(id: string) {
+		images = images.filter((i) => i.id !== id);
+	}
+
+	/** Dropped files: photos as photos, everything else as text files. */
+	function onDrop(e: DragEvent) {
+		e.preventDefault();
+		dragging = false;
+		if (disabled) return;
+		const files = Array.from(e.dataTransfer?.files ?? []);
+		const photos = files.filter((f) => f.type.startsWith('image/'));
+		const others = files.filter((f) => !f.type.startsWith('image/'));
+		if (photos.length > 0) void addImages(photos);
+		if (others.length > 0) void addFiles(others);
+	}
+
+	function onDragOver(e: DragEvent) {
+		if (!e.dataTransfer?.types.includes('Files')) return;
+		e.preventDefault();
+		dragging = true;
 	}
 
 	// --- Voice input (Web Speech API) ---------------------------------------
@@ -233,8 +299,25 @@
 
 <div class="w-full">
 	<div
-		class="rounded-[26px] border bg-secondary p-2 shadow-sm transition-shadow focus-within:shadow-md dark:shadow-none"
+		class={[
+			'rounded-[26px] border bg-secondary p-2 shadow-sm transition-shadow focus-within:shadow-md dark:shadow-none',
+			dragging && 'border-brand ring-2 ring-brand/30'
+		]}
+		role="group"
+		aria-label="Message composer"
+		ondragover={onDragOver}
+		ondragleave={() => (dragging = false)}
+		ondrop={onDrop}
 	>
+		{#if images.length > 0}
+			<ul class="flex flex-wrap gap-3 px-1.5 pt-2 pb-2" aria-label="Photos">
+				{#each images as image (image.id)}
+					<li>
+						<ImageChip name={image.name} url={image.url} onRemove={() => removeImage(image.id)} />
+					</li>
+				{/each}
+			</ul>
+		{/if}
 		{#if attachments.length > 0}
 			<ul class="flex flex-wrap gap-2 px-1 pt-1 pb-2" aria-label="Attachments">
 				{#each attachments as file (file.id)}
@@ -269,6 +352,14 @@
 					class="hidden"
 					onchange={(e) => addFiles((e.currentTarget as HTMLInputElement).files)}
 				/>
+				<input
+					bind:this={imageInput}
+					type="file"
+					multiple
+					accept={IMAGE_ACCEPT}
+					class="hidden"
+					onchange={(e) => addImages((e.currentTarget as HTMLInputElement).files)}
+				/>
 				<DropdownMenu.Root>
 					<DropdownMenu.Trigger
 						class={buttonVariants({ variant: 'subtle', size: 'icon-round' })}
@@ -283,10 +374,12 @@
 							Add files
 							<span class="ml-auto text-xs text-muted-foreground">text &amp; code</span>
 						</DropdownMenu.Item>
-						<DropdownMenu.Item disabled>
+						<DropdownMenu.Item disabled={!canSeeImages} onSelect={() => imageInput?.click()}>
 							<Image class="text-muted-foreground" />
-							Add photos
-							<Badge variant="secondary" class="ml-auto">Soon</Badge>
+							<span class="flex flex-col">
+								Add photos
+								{#if !canSeeImages}<span class="text-xs text-muted-foreground">Not available with this model</span>{/if}
+							</span>
 						</DropdownMenu.Item>
 						<DropdownMenu.Separator />
 						<DropdownMenu.CheckboxItem bind:checked={webSearch} disabled={!canUseTools}>
@@ -354,6 +447,6 @@
 	</div>
 
 	<p class="mt-2 min-h-4 px-2 text-center text-xs text-muted-foreground" aria-live="polite">
-		{notice || brand.disclaimer}
+		{notice || (needsImageModel ? "This model can't read photos. Pick one that can, such as gemma-4-e2b." : brand.disclaimer)}
 	</p>
 </div>

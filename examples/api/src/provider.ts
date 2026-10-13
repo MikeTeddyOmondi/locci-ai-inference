@@ -23,6 +23,8 @@ export interface ChatModel {
   description: string;
   /** Can call tools (weather, search, MCP); otherwise tools are left off. */
   tools: boolean;
+  /** Reads images sent as file parts; other models get a note in their place. */
+  images?: boolean;
   /** Needs input the clients can't send yet (images), so not selectable. */
   disabled?: boolean;
 }
@@ -35,8 +37,9 @@ const MODEL_INFO: Record<string, Omit<ChatModel, 'id'> & { contextTokens?: numbe
   // Context per request = llama-server -c / --parallel (compose.yaml).
   'qwen3-1.7b': { description: 'Chat, code and tools', tools: true, contextTokens: 16384 },
   'qwen2.5-coder-1.5b': { description: 'Code generation, no tools', tools: false, contextTokens: 2048 },
-  'gemma-4-e2b': { description: 'Gemma 4 E2B: chat and tools (on trial)', tools: true, contextTokens: 8192 },
-  'baidu-ocr-vision': { description: 'Reads images (photos coming soon)', tools: false, disabled: true },
+  'gemma-4-e2b': { description: 'Chat, tools and images (on trial)', tools: true, images: true, contextTokens: 8192 },
+  // Needs a task prompt (`OCR:`) rather than a question, and minutes per image on CPU.
+  'baidu-ocr-vision': { description: 'Document OCR (API only)', tools: false, disabled: true },
 };
 
 /**
@@ -47,6 +50,11 @@ export function contextTokensFor(id: string): number {
   const configured = Number(process.env.MODEL_CONTEXT_TOKENS);
   if (configured > 0 && id === (process.env.MODEL ?? DEFAULT_MODEL)) return configured;
   return MODEL_INFO[id]?.contextTokens ?? 8192;
+}
+
+/** Whether a model reads images; unknown ids don't, to be safe. */
+export function supportsImages(id: string): boolean {
+  return MODEL_INFO[id]?.images ?? false;
 }
 
 /** Whether a model may be given tools; unknown ids get none, to be safe. */
@@ -85,8 +93,8 @@ export function resolveModel(): Resolved {
     const ids = (await listModels(settings)).map((m) => m.id).filter((id) => !embeddings.has(id));
     if (!ids.includes(modelId)) ids.unshift(modelId);
     const models = ids.map((id): ChatModel => {
-      const { description, tools, disabled } = MODEL_INFO[id] ?? { description: 'Chat', tools: false };
-      return { id, description, tools, ...(disabled ? { disabled } : {}) };
+      const { description, tools, images, disabled } = MODEL_INFO[id] ?? { description: 'Chat', tools: false };
+      return { id, description, tools, ...(images ? { images } : {}), ...(disabled ? { disabled } : {}) };
     });
     // Default first, unavailable last, the rest as the gateway lists them.
     const rank = (m: ChatModel) => (m.id === modelId ? 0 : m.disabled ? 2 : 1);

@@ -120,13 +120,13 @@
 		}
 	}
 
-	async function handleSubmit({ text, attachments, webSearch }: ComposerSubmit) {
+	async function handleSubmit({ text, attachments, images, webSearch }: ComposerSubmit) {
 		if (!chat) return;
 
 		// Create the thread on the first message, titled after it.
 		let isNewThread = false;
 		if (!temporary && !currentThreadId) {
-			const title = (text || attachments[0]?.name || 'New chat').replace(/\s+/g, ' ').slice(0, 60);
+			const title = (text || attachments[0]?.name || images[0]?.name || 'New chat').replace(/\s+/g, ' ').slice(0, 60);
 			const thread = await createConversation(title, text.slice(0, 100), false);
 			if (thread) {
 				currentThreadId = thread.id;
@@ -136,8 +136,10 @@
 		}
 
 		// Attached files go to the model as extra text parts; ChatMessage shows
-		// them as file chips rather than their contents.
+		// them as file chips rather than their contents. Photos go as file parts,
+		// which the API passes to models that read images.
 		const parts = [
+			...images.map((i) => ({ type: 'file' as const, mediaType: i.mediaType, url: i.url, filename: i.name })),
 			...(text ? [{ type: 'text' as const, text }] : []),
 			...attachments.map((a) => ({
 				type: 'text' as const,
@@ -175,7 +177,7 @@
 
 	/**
 	 * Edit a sent message in place: replace its text (keeping any attached
-	 * files), drop everything after it, and ask again. The AI SDK does the
+	 * files and photos), drop everything after it, and ask again. The AI SDK does the
 	 * truncation when `messageId` is given; persist() then saves the new history.
 	 */
 	async function editMessage(messageId: string, text: string) {
@@ -183,8 +185,9 @@
 		const original = chat.messages.find((m) => m.id === messageId);
 		if (!original) return;
 		const attachments = original.parts.filter((p) => p.type === 'text' && ATTACHMENT_RE.test(p.text));
+		const photos = original.parts.filter((p) => p.type === 'file');
 		chat.sendMessage(
-			{ parts: [{ type: 'text', text }, ...attachments], messageId },
+			{ parts: [...photos, { type: 'text', text }, ...attachments], messageId },
 			{ body: { model: ui.model || undefined } }
 		);
 		await tick();
@@ -212,7 +215,7 @@
 
 	const icons = { cloud: Cloud, globe: Globe, pencil: Pencil, code: Code } as const;
 	function useSuggestion(prompt: string) {
-		void handleSubmit({ text: prompt, attachments: [], webSearch: prompt.toLowerCase().includes('search the web') });
+		void handleSubmit({ text: prompt, attachments: [], images: [], webSearch: prompt.toLowerCase().includes('search the web') });
 	}
 </script>
 

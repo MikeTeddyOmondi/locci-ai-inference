@@ -37,6 +37,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Document resumable replies and Ursula durability in docs/RESUMABILITY.md (`1fac275`)
 - bearer auth on /chat with AUTH=locci; the CLI and TUI send LOCCI_ACCESS_TOKEN or an exchanged LOCCI_API_KEY (`baf9aca`)
 - import chats a browser kept before sign-in into the signed-in user's chats (`7586e37`)
+- gemma-4-e2b pool (Gemma 4 E2B with its vision projector, opt-in profile gemma), measured in docs/SLMS.md (`a7148d8`)
 
 ### Changed
 
