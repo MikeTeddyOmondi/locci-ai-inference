@@ -104,6 +104,17 @@ services:
     profiles: ["qwen25"]
     command: ["-m", "/models/${QWEN25_CODER_MODEL:-qwen2.5-coder-1.5b-instruct-q4_k_m.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "8192", "--cont-batching", "--parallel", "${LLAMA_PARALLEL:-4}", "--cache-ram", "${QWEN25_CACHE_RAM:-512}"]
 
+  # 4c. Inference: Gemma Pool, model id `gemma-4-e2b` (opt-in, on trial)
+  # Gemma 4 E2B with its vision projector (--mmproj), so requests can carry
+  # images as OpenAI `image_url` parts. Like Qwen3 it thinks by default,
+  # so --reasoning off keeps tool calls in `tool_calls`. 16384 / 2 slots = 8192
+  # tokens per request, q8_0 KV cache. Start it with
+  # `docker compose --profile gemma up -d llama-gemma-1` (docs/SLMS.md).
+  llama-gemma-1:
+    <<: *llama
+    profiles: ["gemma"]
+    command: ["-m", "/models/${GEMMA_MODEL:-gemma-4-E2B-it-Q4_K_M.gguf}", "--mmproj", "/models/${GEMMA_MMPROJ:-gemma-4-E2B-it-mmproj-F16.gguf}", "--host", "0.0.0.0", "--port", "8080", "-c", "${GEMMA_CTX:-16384}", "--cont-batching", "--parallel", "${GEMMA_PARALLEL:-2}", "--flash-attn", "on", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--jinja", "--reasoning", "${GEMMA_REASONING:-off}", "--cache-ram", "${GEMMA_CACHE_RAM:-512}"]
+
   # 5. Inference: Vision/OCR Pool (opt-in)
   # PaddleOCR-VL 1.6: send an image plus a task prompt (`OCR:`, `Table
   # Recognition:`, `Formula Recognition:`, `Chart Recognition:`, `Seal

@@ -40,7 +40,7 @@ up-all:
 
 # Stop and remove the stack (all profiles).
 down:
-    docker compose --profile qwen25 --profile vision --profile embed --profile ursula down
+    docker compose --profile qwen25 --profile gemma --profile vision --profile embed --profile ursula down
 
 # Start Ursula for resumable web replies (RESUMABLE_STREAMS=ursula), reached only via KrakenD.
 ursula-up:

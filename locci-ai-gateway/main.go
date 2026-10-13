@@ -20,6 +20,7 @@ import (
 var ModelRegistry = map[string]string{
 	"qwen3-1.7b":         "/coder",        // chat, code, tool calling
 	"qwen2.5-coder-1.5b": "/qwen25-coder", // code generation only; cannot call tools
+	"gemma-4-e2b":        "/gemma",        // Gemma 4 E2B, text and images; opt-in pool, on trial
 	"baidu-ocr-vision":   "/vision",
 	"embedding-nomic":    "/embed",
 }

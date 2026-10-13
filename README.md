@@ -94,6 +94,7 @@ All on llama.cpp `server-b11434` (pinned), CPU only in the local Colima VM (4 vC
 | --- | --- | --- | --- |
 | `qwen3-1.7b` | `/coder` (1 node) | Qwen3-1.7B Q4_K_M, `--reasoning off`, 16384 tokens per request (q8_0 KV cache) | ~50 tokens/s; tool calling passes every check; 3.1 to 4.2 GiB |
 | `qwen2.5-coder-1.5b` | `/qwen25-coder` (1 node, opt-in) | Qwen2.5-Coder-1.5B-Instruct Q4_K_M | ~56 tokens/s; code generation; **cannot call tools**; 1.25 to 2.3 GiB |
+| `gemma-4-e2b` | `/gemma` (`--profile gemma`, on trial) | Gemma 4 E2B Q4_K_M + mmproj, `--reasoning off` | ~33 tokens/s; tool calling passes every check; reads images in seconds; 2.9 to 3.1 GiB |
 | `baidu-ocr-vision` | vision (`--profile vision`) | PaddleOCR-VL 1.6 + mmproj | Exact text and table recognition on the fixtures; 2 to 3 min per new image on CPU |
 | `embedding-nomic` | embed (`--profile embed`) | nomic-embed-text v1.5 Q4_K_M | 768 dims; inputs over 512 tokens fail until `-ub` is raised |
 
@@ -103,6 +104,7 @@ All on llama.cpp `server-b11434` (pinned), CPU only in the local Colima VM (4 vC
 | --- | --- | --- | --- |
 | `qwen3-1.7b` | `/v1/chat/completions`; SDK `streamText` / `generateText`, tools. `just chat`'s default | Yes | |
 | `qwen2.5-coder-1.5b` | `/v1/chat/completions`; SDK `streamText` / `generateText`. Code generation, no tools | Yes | With `tools`, the call comes back as plain text in `content` (no `tool_calls`); with `tool_choice: "required"` it runs to `max_tokens` |
+| `gemma-4-e2b` | `/v1/chat/completions`, tools, and images as `image_url` parts with a plain instruction; SDK `streamText` / `generateText` with `file` parts | Yes | |
 | `baidu-ocr-vision` | `/v1/chat/completions` with an image plus a task prompt (`OCR:`, `Table Recognition:`, ...); SDK `generateText` with a `file` part | No | Junk text for a text-only prompt (measured: `貨貨`) |
 | `embedding-nomic` | `/v1/embeddings`; SDK `embed` / `embedMany` | No | An empty chat stream with no `finish_reason` |
 

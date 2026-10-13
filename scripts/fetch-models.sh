@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Download GGUF models into ./models. Coder models always; others opt-in.
 # Usage: scripts/fetch-models.sh [--vision] [--embed] [--qwen-candidates | --qwen3-0.6b
-#        --qwen3-4b --qwen3-4b-instruct --qwen3.5-2b --qwen3.5-4b]
+#        --qwen3-4b --qwen3-4b-instruct --qwen3.5-2b --qwen3.5-4b] [--gemma4-e2b]
 # The --qwen* flags fetch alternatives to Qwen3-1.7B for trials; see docs/SLMS.md.
 set -eu
 
@@ -48,6 +48,12 @@ for arg in "$@"; do
       ;;
     --qwen3.5-2b) fetch "$HF/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf" Qwen3.5-2B-Q4_K_M.gguf ;;
     --qwen3.5-4b) fetch "$HF/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf" Qwen3.5-4B-Q4_K_M.gguf ;;
+    # Pool for `gemma-4-e2b` (opt-in, profile `gemma`): the model and its
+    # vision projector, so the pool reads images too.
+    --gemma4-e2b)
+      fetch "$HF/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf" gemma-4-E2B-it-Q4_K_M.gguf
+      fetch "$HF/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-F16.gguf" gemma-4-E2B-it-mmproj-F16.gguf
+      ;;
     --qwen-candidates)
       "$0" --qwen3-0.6b --qwen3-4b --qwen3-4b-instruct --qwen3.5-2b --qwen3.5-4b
       ;;

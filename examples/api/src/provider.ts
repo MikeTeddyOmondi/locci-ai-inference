@@ -35,6 +35,7 @@ const MODEL_INFO: Record<string, Omit<ChatModel, 'id'> & { contextTokens?: numbe
   // Context per request = llama-server -c / --parallel (compose.yaml).
   'qwen3-1.7b': { description: 'Chat, code and tools', tools: true, contextTokens: 16384 },
   'qwen2.5-coder-1.5b': { description: 'Code generation, no tools', tools: false, contextTokens: 2048 },
+  'gemma-4-e2b': { description: 'Gemma 4 E2B: chat and tools (on trial)', tools: true, contextTokens: 8192 },
   'baidu-ocr-vision': { description: 'Reads images (photos coming soon)', tools: false, disabled: true },
 };
 

@@ -12,6 +12,7 @@ Each gateway model id names the model running in its pool. Everything runs in th
 | --- | --- | --- | --- |
 | `qwen2.5-coder-1.5b` | qwen25-coder (1 node) | Qwen2.5-Coder-1.5B-Instruct Q4_K_M (1.0 GB) | Code generation, ~56 tokens/s. **Cannot call tools** (see below). 1.25 to 2.3 GiB resident. |
 | `qwen3-1.7b` | coder (1 node) | **Qwen3-1.7B** Q4_K_M (1.28 GB, ggml-org), `--reasoning off` | Chat and code ~50 tokens/s generation, ~190 tokens/s prompt. **Tool calling passes** every `just tools-api` / `just tools-sdk` check, 3 runs in a row. ~2.8 to 3.8 GiB resident (8192 tokens per request, prompt cache capped at 1 GiB). |
+| `gemma-4-e2b` | gemma (1 node, opt-in) | **Gemma 4 E2B** Q4_K_M (3.1 GB) + F16 mmproj (0.99 GB), `--reasoning off` | On trial. **Tool calling passes** every `just tools-api` / `tools-sdk` check. **Reads images**: exact text from both OCR fixtures in 5 to 6 s. ~33 tokens/s. ~2.9 to 3.1 GiB resident. |
 | `baidu-ocr-vision` | vision | **PaddleOCR-VL 1.6** (0.94 GB) + mmproj (0.88 GB), `--temp 0` | `just ocr-api` passes: exact text from an invoice image, and a 3x3 table. **Slow on CPU**: 110 to 180 s per image (see below). ~1.5 GiB resident. |
 | `embedding-nomic` | embed | nomic-embed-text v1.5 Q4_K_M (80 MB) | 768 dims. Inputs over 512 tokens fail until `-ub` is raised. |
 
@@ -20,6 +21,14 @@ Each gateway model id names the model running in its pool. Everything runs in th
 - **Tool calling:** forced calls (`tool_choice: "required"`) are parsed into `tool_calls`, tool results round-trip into a text answer, and streamed calls reassemble from deltas, through curl and through the AI SDK. With `"auto"` it called the tool when the question needed it (3 of 3) and answered in plain text for an unrelated prompt with tools present (3 of 3).
 - **Thinking:** off via `--reasoning off`; no `<think>` text or `reasoning_content` in responses. Set `CODER_REASONING=on` in `.env` to enable it (answers get slower and longer; tool calls may then appear in `reasoning_content`).
 - **Memory:** 3.1 GiB after start and 4.2 GiB under a 13,000-token prompt with `-c 32768 --parallel 2`, q8_0 KV cache, `--cache-ram 1024` (16384 tokens per request; previously ~2.8 to 3.8 GiB at 8192 per request with an f16 cache), against ~1.25 GiB for Qwen2.5-Coder. Without the `--cache-ram` cap the prompt cache grew until the OOM killer took the node; see [LLAMA_SERVER.md](LLAMA_SERVER.md#measured-on-this-machine).
+
+### Gemma 4 E2B (gemma pool), measured
+
+- **Setup:** `just models --gemma4-e2b`, then `docker compose --profile gemma up -d --wait llama-gemma-1`. Q4_K_M from `unsloth/gemma-4-E2B-it-GGUF` plus its `mmproj-F16.gguf`, `-c 16384 --parallel 2` (8192 tokens per request), q8_0 KV cache, `--cache-ram 512`, `--reasoning off`. The projector also enables audio input, which llama.cpp marks experimental (untested here).
+- **Tool calling:** with thinking off, every check in `MODEL=gemma-4-e2b scripts/tool-calls-api.sh` and the SDK's `scripts/tool-calls.ts` passes: forced call, result round trip, streamed call, and `"auto"` calls the tool when the question needs it.
+- **Images:** sent as `image_url` parts with a plain instruction (no task prompts needed). "Transcribe all the text in this image exactly" returned every line of the invoice fixture in 6.2 s (192 prompt tokens), and "Convert this table to Markdown" a correct Markdown table in 4.6 s (125 prompt tokens). PaddleOCR-VL takes 110 to 175 s for the same images, because Gemma encodes an image into far fewer tokens. PaddleOCR-VL remains the specialist for dense documents, formulas and seals; not compared on those yet.
+- **Speed:** ~33 tokens/s generation, ~40 tokens/s on short prompts (Qwen3-1.7B: ~50).
+- **Memory:** 3.1 GiB after start, 2.9 GiB after the checks. Next to the Qwen3 node (3.6 GiB) that is 6.7 of the 7.7 GiB VM before long prompts, so run either alongside Qwen3 with the other opt-in pools off, or instead of it.
 
 ### PaddleOCR-VL 1.6 (vision pool), measured
 
@@ -43,7 +52,7 @@ Sizes are approximate Q4_K_M files. "Fits" is for this 7.7 GiB VM with the other
 | Qwen2.5-1.5B-Instruct | ~1.1 GB | Measured here: passes the protocol checks but is weak at deciding *when* to call. A baseline, superseded by Qwen3-1.7B. | Yes, two nodes |
 | **LFM2.5-1.2B** (Liquid AI) | ~0.8 GB | Second on the same benchmark (0.920); built for edge and CPU. | Yes, two nodes |
 | **Qwen3.5 2B / 4B** | 1.28 / 2.74 GB | Newest Qwen below 27B (Feb to Mar 2026), 262K context, hybrid attention (small KV cache). Downloaded; see below. | 2B yes; 4B one node |
-| **Gemma 4 E2B / E4B** | ~1.5 / ~3 GB | Native function calling, 128K context, multimodal (image, audio). Thinking on by default: tool calls land in `reasoning_content` unless disabled. | E2B yes; E4B one node |
+| **Gemma 4 E2B / E4B** | 3.1 / ~5 GB | Native function calling, 128K context, multimodal (image, audio). **E2B on trial as `gemma-4-e2b`; passes our checks** (see above). | E2B yes (one node); E4B GPU box |
 | **Qwen 3.5 9B** | ~6 GB | Recommended 8 GB-tier pick for tool calling in a mid-2026 guide. | No (GPU box) |
 | **Qwen2.5-Coder-7B** | ~4.7 GB | The model the old `qwen-coder-7b` id named. Strong code completion, older tool-calling. | One node only |
 | Phi-4-mini (3.8B), SmolLM3-3B | ~2.5 / ~2 GB | Solid 3 to 4B generalists; worth a look if Qwen or Gemma disappoint. | One to two nodes |
