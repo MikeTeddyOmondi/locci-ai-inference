@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { authHeaders, explain401 } from './auth.js';
+import { authHeaders, explain401, login, logout, whoami } from './auth.js';
 
 // Ported from locci-chat-cli's src/cli.ts. A pure client of the example API
 // (examples/api), which talks to the Locci AI Gateway through @locci/ai-sdk.
@@ -75,6 +75,32 @@ program
   .name('locci-chat')
   .description('Chat CLI for the Locci AI Gateway: talks to the example API (examples/api)')
   .version('0.1.0');
+
+program
+  .command('login')
+  .description('Sign in with Locci in the browser (for an API running AUTH=locci)')
+  .action(async () => {
+    try {
+      await login();
+    } catch (error) {
+      console.error(`❌ Login failed: ${(error as Error).message}`);
+      process.exitCode = 1;
+    }
+  });
+
+program.command('logout').description('Forget the saved Locci login').action(logout);
+
+program
+  .command('whoami')
+  .description('Show who requests are sent as, and which credential is used')
+  .action(async () => {
+    try {
+      await whoami();
+    } catch (error) {
+      console.error(`❌ ${(error as Error).message}`);
+      process.exitCode = 1;
+    }
+  });
 
 program
   .command('status')

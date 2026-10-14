@@ -53,6 +53,9 @@ importers:
 
   examples/cli:
     dependencies:
+      '@openauthjs/openauth':
+        specifier: 0.4.3
+        version: 0.4.3(arctic@2.3.4)(hono@4.13.13)
       '@opentui/core':
         specifier: 0.4.5
         version: 0.4.5(typescript@5.9.3)(web-tree-sitter@0.25.10)
