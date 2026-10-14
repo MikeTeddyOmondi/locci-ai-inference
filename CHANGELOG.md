@@ -40,6 +40,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - gemma-4-e2b pool (Gemma 4 E2B with its vision projector, opt-in profile gemma), measured in docs/SLMS.md (`a7148d8`)
 - photo uploads in the web chat (pick, paste or drop; resized in the browser) for models that read images, with an API guard for the rest (`9fdf435`)
 - locci-chat login, logout and whoami (browser PKCE login, session in ~/.locci, refreshed per request) with a branded callback page (`b4c6bbb`)
+- Document the CLI agent plan in BACKLOG.md: client-side shell tool, Locci Box agent boxes, --continue/--resume, compaction (`2891e5c`)
 
 ### Changed
 

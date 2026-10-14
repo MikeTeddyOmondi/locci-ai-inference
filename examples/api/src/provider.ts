@@ -33,11 +33,13 @@ export interface ChatModel {
  * What each gateway model is for. The ids come from the gateway; this only
  * adds words. A model the gateway adds later still lists, as a plain chat model.
  */
-const MODEL_INFO: Record<string, Omit<ChatModel, 'id'> & { contextTokens?: number }> = {
+const MODEL_INFO: Record<string, Omit<ChatModel, 'id'> & { contextTokens?: number; thinkWithTools?: boolean }> = {
   // Context per request = llama-server -c / --parallel (compose.yaml).
   'qwen3-1.7b': { description: 'Chat, code and tools', tools: true, contextTokens: 16384 },
   'qwen2.5-coder-1.5b': { description: 'Code generation, no tools', tools: false, contextTokens: 2048 },
-  'gemma-4-e2b': { description: 'Chat, tools and images (on trial)', tools: true, images: true, contextTokens: 8192 },
+  // thinkWithTools: file edits from the CLI passed 6 of 8 with thinking, 4 of 8
+  // without (BACKLOG.md). qwen3-1.7b did no better thinking, and ~10x slower.
+  'gemma-4-e2b': { description: 'Chat, tools and images (on trial)', tools: true, images: true, contextTokens: 8192, thinkWithTools: true },
   // Needs a task prompt (`OCR:`) rather than a question, and minutes per image on CPU.
   'baidu-ocr-vision': { description: 'Document OCR (API only)', tools: false, disabled: true },
 };
@@ -50,6 +52,11 @@ export function contextTokensFor(id: string): number {
   const configured = Number(process.env.MODEL_CONTEXT_TOKENS);
   if (configured > 0 && id === (process.env.MODEL ?? DEFAULT_MODEL)) return configured;
   return MODEL_INFO[id]?.contextTokens ?? 8192;
+}
+
+/** Whether a model should think on a turn where a client runs tools (measured per model). */
+export function thinksWithTools(id: string): boolean {
+  return MODEL_INFO[id]?.thinkWithTools ?? false;
 }
 
 /** Whether a model reads images; unknown ids don't, to be safe. */

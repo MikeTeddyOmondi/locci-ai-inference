@@ -1,4 +1,4 @@
-import type { LanguageModelMiddleware, UIMessage } from 'ai';
+import type { LanguageModelMiddleware, ModelMessage, UIMessage } from 'ai';
 
 /**
  * Keeps a web conversation inside the model's context window.
@@ -271,4 +271,48 @@ export function overflowRetry(answerTokens: number, tag = ''): LanguageModelMidd
       }
     },
   };
+}
+
+type ContentPart = { type: string; mediaType?: string; filename?: string };
+
+function isImagePart(p: ContentPart): boolean {
+  return p.type === 'image' || (p.type === 'file' && Boolean(p.mediaType?.startsWith('image/')));
+}
+
+/** Whether a ModelMessage (the CLI's /chat history) carries an image. */
+export function modelMessageHasImage(m: ModelMessage | undefined): boolean {
+  return Boolean(m && Array.isArray(m.content) && (m.content as ContentPart[]).some(isImagePart));
+}
+
+/**
+ * describeImages for /chat's ModelMessages: after a switch to a model that
+ * can't see them, earlier photos become a one-line note each.
+ */
+export function describeModelImages(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map((m) =>
+    m.role === 'user' && modelMessageHasImage(m)
+      ? ({
+          ...m,
+          content: (m.content as ContentPart[]).map((p) =>
+            isImagePart(p)
+              ? { type: 'text', text: `[The user attached an image${p.filename ? ` (${p.filename})` : ''}, which this model cannot see.]` }
+              : p,
+          ),
+        } as ModelMessage)
+      : m,
+  );
+}
+
+/**
+ * Image parts before the text in each user message. With tools in the
+ * request, Gemma 4 on llama.cpp ignores an image that comes after the text
+ * ("I need an image") and reads it when it comes first (2 of 2 each way); the
+ * web app already sends photos first.
+ */
+export function imagesFirst(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map((m) =>
+    m.role === 'user' && Array.isArray(m.content) && m.content.some(isImagePart)
+      ? { ...m, content: [...m.content.filter(isImagePart), ...m.content.filter((p) => !isImagePart(p))] }
+      : m,
+  );
 }

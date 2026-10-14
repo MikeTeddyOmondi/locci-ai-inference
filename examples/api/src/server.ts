@@ -16,10 +16,20 @@ import {
   type ToolSet,
   type UIMessage,
 } from 'ai';
-import { contextTokensFor, resolveModel, supportsImages, supportsTools } from './provider.js';
-import { describeImages, dropPrintedToolCalls, fitToContext, hasImage, inlineAttachments, overflowRetry } from './context.js';
+import { contextTokensFor, resolveModel, supportsImages, supportsTools, thinksWithTools } from './provider.js';
+import {
+  describeImages,
+  describeModelImages,
+  dropPrintedToolCalls,
+  fitToContext,
+  hasImage,
+  imagesFirst,
+  inlineAttachments,
+  modelMessageHasImage,
+  overflowRetry,
+} from './context.js';
 import { clearlyNoSearch, earlierSearches, planSearchQuery, relevantResults } from './search-plan.js';
-import { builtinTools, webSystemPrompt } from './tools.js';
+import { builtinTools, clientTools, shellPrompt, webSystemPrompt } from './tools.js';
 import { LibsqlThreadStore, type ThreadStore, type ThreadWithMessages } from './threads.js';
 import { onShutdown, installShutdown } from './shutdown.js';
 import { connectMcpServers, hasMcpConfig, mcpConfigPath, type McpServerStatus } from './mcp.js';
@@ -395,23 +405,103 @@ function summarize(output: unknown): string {
  *   { "t": "tool-done",  "id": "…", "output": "…" }   // or "error"
  *   { "t": "finish",     "reason": "stop", "usage": { … } }
  *   { "t": "error",      "v": "…" }
+ *   { "t": "thinking" }                               // with `reasoning: true`, when the model starts to think
+ *
+ * A client that can run tools itself lists them: `clientTools: ["shell",
+ * "read_file", "write_file", "edit_file"]`,
+ * with `cwd` and `platform` for the system prompt (events only). The model's
+ * call to one ends the reply with
+ *
+ *   { "t": "tool-call",  "id": "…", "name": "shell", "input": { "command": "…" } }
+ *   { "t": "finish",     "reason": "tool-calls", … }
+ *   { "t": "messages",   "v": [ …ModelMessage ] }   // this reply, to append to the history
+ *
+ * and the client runs it, appends a `tool` message with the result, and posts
+ * again. `messages` is sent on every reply to such a client, so its history
+ * keeps tool calls and results, not only text.
  */
 app.post('/chat', requireUser, async (req, res) => {
-  const { messages, system } = req.body as {
+  const { messages, system, cwd, platform, model: requested, reasoning } = req.body as {
     messages?: ModelMessage[];
     system?: string;
+    model?: string;
+    /**
+     * Let the model think before it answers (Qwen3 and Gemma 4 chat templates).
+     * Unset: the model's default for turns with client tools (thinksWithTools).
+     */
+    reasoning?: boolean;
+    clientTools?: unknown;
+    cwd?: unknown;
+    platform?: unknown;
   };
+  const onClient = clientTools(req.body.clientTools);
+  const hasClientTools = Object.keys(onClient).length > 0;
 
   if (!Array.isArray(messages)) {
     res.status(400).json({ error: 'Body must be { messages: ModelMessage[] }' });
     return;
   }
+  if (hasClientTools && req.query.events !== '1') {
+    res.status(400).json({ error: 'clientTools needs ?events=1 (the tool calls come as events)' });
+    return;
+  }
+
+  // `model`, as in /api/chat: one /models offers. The TUI picks a model that
+  // reads images for a conversation with photos.
+  let chatModel = model;
+  let chatModelId = modelId;
+  if (requested && requested !== modelId) {
+    const known = await chatModels().catch(() => []);
+    if (!known.some((m) => m.id === requested && !m.disabled)) {
+      res.status(400).json({ error: `Unknown or unavailable model: ${requested}` });
+      return;
+    }
+    chatModel = modelFor(requested);
+    chatModelId = requested;
+  }
+  // As /api/chat: a new photo for a model that can't see it is refused; photos
+  // earlier in the chat (before a /model switch) become notes.
+  const withImage = messages.some(modelMessageHasImage);
+  const seesImages = supportsImages(chatModelId);
+  if (!seesImages && modelMessageHasImage([...messages].reverse().find((m) => m.role === 'user'))) {
+    res.status(400).json({ error: `${chatModelId} can't read images. Pick a model that can, such as gemma-4-e2b.` });
+    return;
+  }
+
+  // The CLI stopping a reply (Esc) closes the connection: stop the model too,
+  // or it keeps generating and holds one of the node's slots.
+  const stop = new AbortController();
+  res.on('close', () => {
+    if (!res.writableFinished) stop.abort();
+  });
 
   const result = streamText({
-    model,
-    system,
-    messages,
-    tools,
+    model: chatModel,
+    abortSignal: stop.signal,
+    // A node the VM's OOM killer restarted answers `503 Loading model` for a
+    // few seconds: retry for about 30 s (2, 4, 8, 16) instead of the default 6.
+    maxRetries: 4,
+    // The pools run with --reasoning off; enable_thinking turns it back on for
+    // this request (llama.cpp passes chat_template_kwargs to the template).
+    ...((reasoning ?? (hasClientTools && thinksWithTools(chatModelId)))
+      ? { providerOptions: { locci: { chat_template_kwargs: { enable_thinking: true } } } }
+      : {}),
+    system:
+      'shell' in onClient
+        ? [system, shellPrompt({ cwd, platform, files: 'write_file' in onClient || 'edit_file' in onClient })].filter(Boolean).join('\n\n')
+        : system,
+    messages: !withImage ? messages : seesImages ? imagesFirst(messages) : describeModelImages(messages),
+    // A client that runs `shell` works in its own folder; the MCP servers'
+    // file tools would read the API host's disk instead, and small models pick
+    // them over `shell`. So it gets the built-ins (which win a clash) only.
+    // A picked model that can't call tools would print the call as text (as
+    // in /api/chat); the configured MODEL keeps them, as before.
+    tools:
+      chatModelId !== modelId && !supportsTools(chatModelId)
+        ? undefined
+        : hasClientTools
+          ? { ...onClient, ...builtin.tools }
+          : tools,
     // Turn a single request into a tool-calling loop: the model can call a
     // tool, get the result, and keep going until it answers (or 8 steps).
     stopWhen: stepCountIs(8),
@@ -433,13 +523,22 @@ app.post('/chat', requireUser, async (req, res) => {
         case 'text-delta':
           write({ t: 'text', v: part.text });
           break;
+        // Only that it is thinking: the thoughts themselves stay out of the
+        // terminal, and they go back in the history the client keeps.
+        case 'reasoning-start':
+          write({ t: 'thinking' });
+          break;
         // Fires as soon as the model commits to a tool, before its arguments
         // finish streaming: that's what lets a client say "Using x…" early.
         case 'tool-input-start':
           write({ t: 'tool', id: part.id, name: part.toolName, title: part.title });
           break;
         case 'tool-call':
-          write({ t: 'tool-input', id: part.toolCallId, input: part.input });
+          write(
+            part.toolName in onClient && !(part.toolName in builtin.tools)
+              ? { t: 'tool-call', id: part.toolCallId, name: part.toolName, input: part.input }
+              : { t: 'tool-input', id: part.toolCallId, input: part.input },
+          );
           break;
         case 'tool-result':
           write({ t: 'tool-done', id: part.toolCallId, output: summarize(part.output) });
@@ -457,6 +556,7 @@ app.post('/chat', requireUser, async (req, res) => {
           break;
       }
     }
+    if (hasClientTools) write({ t: 'messages', v: (await result.response).messages });
   } catch (err) {
     // The stream itself failed; tell the client rather than hanging up silently.
     write({ t: 'error', v: describeError(err) });

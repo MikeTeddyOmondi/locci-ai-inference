@@ -234,13 +234,15 @@ examples-env *flags:
 examples-api: sdk-build
     pnpm --filter @locci/example-ai-api run dev
 
-# Run the CLI client, e.g. `just examples-cli status`, `chat`, `ask "hi"`, `mcp list`
+# Run the CLI client, e.g. `just examples-cli status`, `chat`, `ask "hi"`, `mcp list`.
+# just and pnpm both run from elsewhere, so LOCCI_CWD carries the folder you ran
+# it in: that is where `chat` and `tui` run commands.
 examples-cli *args:
-    pnpm --filter @locci/example-ai-cli exec tsx src/cli.ts {{args}}
+    LOCCI_CWD="{{invocation_directory()}}" pnpm --filter @locci/example-ai-cli exec tsx src/cli.ts {{args}}
 
-# Run the OpenTUI terminal chat (needs Bun)
+# Run the OpenTUI terminal chat (needs Bun); commands run in the folder you ran it in
 examples-tui:
-    cd examples/cli && bun src/tui.tsx
+    cd examples/cli && LOCCI_CWD="{{invocation_directory()}}" bun src/tui.tsx
 
 # Run the web client on :5173 (Vite dev server)
 examples-web:
