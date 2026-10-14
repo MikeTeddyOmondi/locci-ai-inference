@@ -18,6 +18,7 @@ import {
   streamChat,
   thinkFlag,
   THINK_NOTE,
+  warmUp,
   type Action,
   type Msg,
   type ThinkSetting,
@@ -261,6 +262,11 @@ program
       ),
     );
 
+    // The prompt-cache warm-up (agent.ts): again whenever the model, its
+    // thinking or the tools change; a message waits for it.
+    const warm = () => warmUp({ system: opts.system, model, reasoning: shell ? thinkFlag(think) : undefined, shell, cwd });
+    let warming = warm();
+
     const approve = async (action: Action): Promise<boolean> => {
       if (action.kind === 'shell') {
         output.write(`\n${dim('$')} ${action.command}\n`);
@@ -305,6 +311,7 @@ program
               if (!pick.ok) console.log(dim(`${pick.error}\n`));
               else {
                 model = pick.model.id;
+                warming = warm();
                 console.log(dim(`Now using ${model}.${pick.warning ? ` ${pick.warning}` : ''}\n`));
               }
             }
@@ -315,7 +322,10 @@ program
         }
         if (line === '/think' || line.startsWith('/think ')) {
           const next = parseThink(line, think);
-          if (next) think = next;
+          if (next) {
+            think = next;
+            warming = warm();
+          }
           console.log(dim(`${next ? THINK_NOTE[think] : 'Use /think on, /think off or /think auto.'}\n`));
           continue;
         }
@@ -361,6 +371,7 @@ program
         output.write('AI Assistant > ');
 
         try {
+          await warming;
           await runTurn(
             messages,
             {

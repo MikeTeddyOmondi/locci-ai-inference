@@ -42,6 +42,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - locci-chat login, logout and whoami (browser PKCE login, session in ~/.locci, refreshed per request) with a branded callback page (`b4c6bbb`)
 - Document the CLI agent plan in BACKLOG.md: client-side shell tool, Locci Box agent boxes, --continue/--resume, compaction (`2891e5c`)
 - CLI agent tools for chat and the TUI (shell, read, write and edit files with approval, folder trust, YOLO via --yolo or /auto, !commands, Esc to stop), TUI composer, /model, /think and history, gemma-4-e2b by default (`7d1daa4`)
+- compiled CLI binary (just examples-cli-build), Gemma at 32768 tokens per request with older tool output trimmed per round, /chat keep-alive pings and one clear context error; mcp.json from ~/.locci/ai in examples-env, tmp/ ignored (`e3b7c26`)
 
 ### Changed
 

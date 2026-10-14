@@ -421,8 +421,14 @@ function summarize(output: unknown): string {
  * keeps tool calls and results, not only text.
  */
 app.post('/chat', requireUser, async (req, res) => {
-  const { messages, system, cwd, platform, model: requested, reasoning } = req.body as {
+  const { messages, system, cwd, platform, model: requested, reasoning, warm } = req.body as {
     messages?: ModelMessage[];
+    /**
+     * Read the system prompt and tools into the model's prompt cache and stop
+     * after one token: a client sends it when a chat starts, so the first real
+     * message only has its own tokens left to read.
+     */
+    warm?: boolean;
     system?: string;
     model?: string;
     /**
@@ -478,6 +484,7 @@ app.post('/chat', requireUser, async (req, res) => {
   const result = streamText({
     model: chatModel,
     abortSignal: stop.signal,
+    ...(warm ? { maxOutputTokens: 1 } : {}),
     // A node the VM's OOM killer restarted answers `503 Loading model` for a
     // few seconds: retry for about 30 s (2, 4, 8, 16) instead of the default 6.
     maxRetries: 4,

@@ -37,9 +37,10 @@ const MODEL_INFO: Record<string, Omit<ChatModel, 'id'> & { contextTokens?: numbe
   // Context per request = llama-server -c / --parallel (compose.yaml).
   'qwen3-1.7b': { description: 'Chat, code and tools', tools: true, contextTokens: 16384 },
   'qwen2.5-coder-1.5b': { description: 'Code generation, no tools', tools: false, contextTokens: 2048 },
-  // thinkWithTools: file edits from the CLI passed 6 of 8 with thinking, 4 of 8
-  // without (BACKLOG.md). qwen3-1.7b did no better thinking, and ~10x slower.
-  'gemma-4-e2b': { description: 'Chat, tools and images (on trial)', tools: true, images: true, contextTokens: 8192, thinkWithTools: true },
+  // No thinkWithTools: with the write_file rule and the unchanged-write guard,
+  // CLI file edits passed as often without thinking (6/8 and 3/3, as with it)
+  // at ~2.5x the speed (BACKLOG.md). /think on still turns it on.
+  'gemma-4-e2b': { description: 'Chat, tools and images (on trial)', tools: true, images: true, contextTokens: 32768 },
   // Needs a task prompt (`OCR:`) rather than a question, and minutes per image on CPU.
   'baidu-ocr-vision': { description: 'Document OCR (API only)', tools: false, disabled: true },
 };

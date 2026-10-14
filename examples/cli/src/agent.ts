@@ -62,6 +62,7 @@ export async function streamChat(
     clientTools?: string[];
     cwd?: string;
     platform?: string;
+    warm?: boolean;
   },
   onEvent: (event: ChatEvent) => void,
   signal?: AbortSignal,
@@ -178,6 +179,30 @@ async function runClientTool(
   }
 }
 
+/** What every request of a chat shares: the same system prompt and tools, so the prompt cache holds. */
+function requestFor(opts: Pick<TurnOptions, 'system' | 'model' | 'reasoning' | 'shell' | 'cwd'>) {
+  return {
+    system: opts.system,
+    model: opts.model,
+    reasoning: opts.reasoning,
+    ...(opts.shell ? { clientTools: CLIENT_TOOLS, cwd: opts.cwd, platform: process.platform } : {}),
+  };
+}
+
+/**
+ * Have the model read this chat's system prompt and tools (about 1,200 tokens,
+ * some 15 s on CPU) while the user types: llama.cpp keeps them in its prompt
+ * cache, so the first message only reads its own tokens. Never throws; a chat
+ * started meanwhile awaits it, so it lands on the warmed slot.
+ */
+export async function warmUp(opts: Pick<TurnOptions, 'system' | 'model' | 'reasoning' | 'shell' | 'cwd'>): Promise<void> {
+  try {
+    await streamChat({ messages: [{ role: 'user', content: '.' }], ...requestFor(opts), warm: true }, () => {});
+  } catch {
+    // Only a head start: a failure shows on the first real message instead.
+  }
+}
+
 /** What the model is told about a reply or a tool the user stopped (Esc). */
 export const STOPPED = '[stopped by the user]';
 
@@ -186,6 +211,13 @@ const aborted = () => Object.assign(new Error('stopped'), { name: 'AbortError' }
 
 /** How much of an older tool result, or of a file an older call wrote, is sent again. */
 const OLD_RESULT_CHARS = 600;
+/**
+ * Below this size (about 15k tokens, half of Gemma's 32768) the history goes
+ * as it is. Changing an earlier message makes the model re-read everything
+ * after it (llama.cpp reuses only an unchanged prefix of the prompt), so
+ * trimming early costs more time than it saves.
+ */
+const TRIM_ABOVE_CHARS = Number(process.env.LOCCI_TRIM_ABOVE_CHARS) || 60_000;
 const shorten = (text: string) =>
   text.length <= OLD_RESULT_CHARS
     ? text
@@ -194,11 +226,13 @@ const shorten = (text: string) =>
 type Part = { type?: string; input?: Record<string, unknown>; output?: { type?: string; value?: unknown } };
 
 /**
- * The history as sent: everything before the latest tool results is cut down
- * (results and written file contents shortened, earlier thinking dropped), so
- * a long agent session fits a small model's context; `messages` keeps it all.
+ * The history as sent. Once it is long, everything before the latest tool
+ * results is cut down (results and written file contents shortened, earlier
+ * thinking dropped), so a long agent session fits a small model's context;
+ * `messages` keeps it all.
  */
 export function forModel(messages: Msg[]): Msg[] {
+  if (JSON.stringify(messages).length <= TRIM_ABOVE_CHARS) return messages;
   let recent = messages.length;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === 'tool') {
@@ -252,13 +286,7 @@ export async function runTurn(
     let failed = false;
     try {
       await streamChat(
-        {
-          messages: forModel(messages),
-          system: opts.system,
-          model: opts.model,
-          reasoning: opts.reasoning,
-          ...(opts.shell ? { clientTools: CLIENT_TOOLS, cwd: opts.cwd, platform: process.platform } : {}),
-        },
+        { messages: forModel(messages), ...requestFor(opts) },
         (event) => {
           if (event.t === 'tool-call') calls.push(event);
           else if (event.t === 'messages') reply = event.v;

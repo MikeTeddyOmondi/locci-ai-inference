@@ -14,6 +14,7 @@ import {
   pickModel,
   runTurn,
   toolLabel,
+  warmUp,
   type Action,
   type ChatEvent,
   type ModelInfo,
@@ -351,6 +352,17 @@ function App() {
   const ranRef = useRef<string[]>([]);
   // Esc stops the reply or the `!command` in progress through this.
   const stopRef = useRef<AbortController | null>(null);
+  // The prompt-cache warm-up in flight (agent.ts warmUp); a send waits for it.
+  const warmRef = useRef<Promise<void>>(Promise.resolve());
+  const warm = useCallback(() => {
+    warmRef.current = warmUp({
+      system: SYSTEM,
+      model: modelRef.current,
+      reasoning: shellRef.current ? thinkFlag(thinkRef.current) : undefined,
+      shell: shellRef.current,
+      cwd: CWD,
+    });
+  }, []);
   const shellRef = useRef(SHELL);
   const thinkRef = useRef<ThinkSetting>(THINK);
   const modelRef = useRef<string | undefined>(MODEL);
@@ -420,7 +432,8 @@ function App() {
     setMessages([]);
     setShowHelp(false);
     setInput('');
-  }, [setInput]);
+    warm();
+  }, [setInput, warm]);
 
   /**
    * Up on the draft's first line shows the message sent before (again for
@@ -617,6 +630,7 @@ function App() {
             // The history stays; photos in it become notes for a model that can't see them.
             modelRef.current = pick.model.id;
             setActiveModel(pick.model.id);
+            warm();
             note(`Now using ${pick.model.id}.${pick.warning ? ` ${pick.warning}` : ''}`);
           }
         }
@@ -628,6 +642,7 @@ function App() {
           if (next) {
             thinkRef.current = next;
             setThink(next);
+            warm();
           }
           note(next ? THINK_NOTE[thinkRef.current] : 'Use /think on, /think off or /think auto.');
           return true;
@@ -680,7 +695,7 @@ function App() {
           return false;
       }
     },
-    [quit, clear, askClear, footer, note],
+    [quit, clear, askClear, footer, note, warm],
   );
 
   useEffect(() => {
@@ -691,9 +706,9 @@ function App() {
 
   // A folder is asked about once, then remembered (src/trust.ts).
   useEffect(() => {
-    if (!SHELL) return;
+    if (!SHELL) return warm();
     isTrusted(CWD).then((ok) => {
-      if (ok) return;
+      if (ok) return warm();
       answerRef.current = (yes) => {
         answerRef.current = null;
         setApproval(null);
@@ -704,6 +719,7 @@ function App() {
           setShellOn(false);
           note('No commands in this chat: the folder was not allowed.');
         }
+        warm(); // with or without the tools, as answered
       };
       setApproval({
         title: TRUST_QUESTION(CWD),
@@ -711,7 +727,7 @@ function App() {
         question: 'Allow?',
       });
     });
-  }, [note]);
+  }, [note, warm]);
 
   /** Resolves true when the command or write may go ahead: at once in YOLO mode, else on y. */
   const approve = useCallback(
@@ -935,6 +951,8 @@ function App() {
     const stopper = new AbortController();
     stopRef.current = stopper;
     try {
+      // Lands on the slot the warm-up just filled, instead of a cold one.
+      await warmRef.current;
       await runTurn(
         history,
         {
