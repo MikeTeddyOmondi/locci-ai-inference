@@ -113,7 +113,7 @@ const builtin = builtinTools();
 for (const line of builtin.report) console.log(line);
 
 // MCP is off by default so the harness stays a plain chat service. Opt in with
-// either MCP_ENABLED=1 or an mcp.json (MCP_CONFIG) next to the project;
+// either MCP_ENABLED=1 or an mcp.json (MCP_CONFIG, the project's, or ~/.locci/ai/mcp.json);
 // MCP_ENABLED=0 forces it off regardless. Servers are declared in the JSON
 // config using the same `mcpServers` shape as Claude Desktop / Cursor.
 let mcpTools: ToolSet = {};

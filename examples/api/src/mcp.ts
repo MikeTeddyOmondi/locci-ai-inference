@@ -4,6 +4,7 @@ import { createMCPClient } from '@ai-sdk/mcp';
 import { ToolSet } from 'ai';
 import { Experimental_StdioMCPTransport as StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 // AI SDK v6 note: these moved to a dedicated package:
@@ -49,9 +50,16 @@ function emptyRuntime(): McpRuntime {
   return { tools: {}, close: async () => {}, servers: [] };
 }
 
-/** Absolute path of the config file: MCP_CONFIG, else ./mcp.json, from cwd. */
+/**
+ * Absolute path of the config file: MCP_CONFIG, else ./mcp.json from cwd, else
+ * the user's ~/.locci/ai/mcp.json (LOCCI_AI_DIR), where the CLI keeps its files.
+ */
 export function mcpConfigPath(): string {
-  return path.resolve(process.cwd(), process.env.MCP_CONFIG ?? 'mcp.json');
+  if (process.env.MCP_CONFIG) return path.resolve(process.cwd(), process.env.MCP_CONFIG);
+  const local = path.resolve(process.cwd(), 'mcp.json');
+  if (fs.existsSync(local)) return local;
+  const user = path.join(process.env.LOCCI_AI_DIR || path.join(os.homedir(), '.locci', 'ai'), 'mcp.json');
+  return fs.existsSync(user) ? user : local;
 }
 
 /** True when a readable config file exists, used by server.ts to auto-enable MCP. */
@@ -179,7 +187,8 @@ function mergeTools(connected: ConnectedServer[]): {
  * Connect to every enabled MCP server and return the merged tools plus a
  * close() per server for the shutdown registry.
  *
- * Servers come from the JSON config (MCP_CONFIG, default ./mcp.json). With no
+ * Servers come from the JSON config (mcpConfigPath: MCP_CONFIG, ./mcp.json or
+ * ~/.locci/ai/mcp.json). With no
  * config file (or a config with zero enabled servers) we fall back to the
  * original single-server behaviour via MCP_COMMAND / MCP_ARGS. With neither,
  * the runtime is empty and the harness still runs as a plain key test.

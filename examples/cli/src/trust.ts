@@ -3,10 +3,10 @@
 // command still asks unless YOLO mode is on.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import * as os from 'node:os';
 import * as path from 'node:path';
+import { aiFile } from './paths.js';
 
-const TRUST_FILE = path.join(os.homedir(), '.locci', 'trusted-folders.json');
+const TRUST_FILE = aiFile('trusted-folders.json');
 
 async function load(): Promise<string[]> {
   try {

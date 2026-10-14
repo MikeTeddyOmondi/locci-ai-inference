@@ -41,6 +41,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - photo uploads in the web chat (pick, paste or drop; resized in the browser) for models that read images, with an API guard for the rest (`9fdf435`)
 - locci-chat login, logout and whoami (browser PKCE login, session in ~/.locci, refreshed per request) with a branded callback page (`b4c6bbb`)
 - Document the CLI agent plan in BACKLOG.md: client-side shell tool, Locci Box agent boxes, --continue/--resume, compaction (`2891e5c`)
+- CLI agent tools for chat and the TUI (shell, read, write and edit files with approval, folder trust, YOLO via --yolo or /auto, !commands, Esc to stop), TUI composer, /model, /think and history, gemma-4-e2b by default (`7d1daa4`)
 
 ### Changed
 

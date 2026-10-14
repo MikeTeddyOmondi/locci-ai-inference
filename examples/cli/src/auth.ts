@@ -9,7 +9,7 @@
 //   `locci-chat login`  the signed-in user's token, refreshed as needed
 //
 // Login follows iaas-service's `locci-compute login` (OpenAuth's PKCE code
-// flow with a localhost callback, tokens kept under ~/.locci), with its own
+// flow with a localhost callback, tokens kept under ~/.locci/ai), with its own
 // client id and file so the two CLIs' sessions don't overwrite each other.
 
 import { createClient } from '@openauthjs/openauth/client';
@@ -17,13 +17,13 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { loginPage } from './login-page.js';
+import { aiFile } from './paths.js';
 
 const SKEW_MS = 60_000;
 const CLIENT_ID = 'locci-ai-cli';
-const SESSION_FILE = path.join(os.homedir(), '.locci', 'ai-chat-cli.json');
+const SESSION_FILE = aiFile('session.json');
 const LOGIN_TIMEOUT_MS = 5 * 60_000;
 const API = () => process.env.API_URL ?? 'http://localhost:3939';
 

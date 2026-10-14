@@ -2,10 +2,10 @@
 // a shell keeps its history. Owner-only, like the login session file.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import * as os from 'node:os';
 import * as path from 'node:path';
+import { aiFile } from './paths.js';
 
-const HISTORY_FILE = path.join(os.homedir(), '.locci', 'ai-chat-history.json');
+const HISTORY_FILE = aiFile('history.json');
 const KEEP = 100;
 
 export async function loadHistory(): Promise<string[]> {
