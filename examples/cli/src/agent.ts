@@ -41,6 +41,8 @@ export type ChatEvent =
   | { t: 'tool-done'; id: string; output?: string; error?: string }
   | { t: 'finish'; reason?: string; usage?: Record<string, unknown> }
   | { t: 'thinking' }
+  /** Keep-alive while a long prompt is read; nothing to show. */
+  | { t: 'ping' }
   | { t: 'messages'; v: Msg[] }
   | { t: 'error'; v?: string };
 
@@ -176,16 +178,65 @@ async function runClientTool(
   }
 }
 
-/**
- * One user turn: post, and while the model calls client tools, run them (once
- * approved), append the results and post again. Appends everything to
- * `messages`, so the history holds the calls and results as the model saw them.
- */
 /** What the model is told about a reply or a tool the user stopped (Esc). */
 export const STOPPED = '[stopped by the user]';
 
 const isAbort = (err: unknown) => (err as Error)?.name === 'AbortError';
 const aborted = () => Object.assign(new Error('stopped'), { name: 'AbortError' });
+
+/** How much of an older tool result, or of a file an older call wrote, is sent again. */
+const OLD_RESULT_CHARS = 600;
+const shorten = (text: string) =>
+  text.length <= OLD_RESULT_CHARS
+    ? text
+    : `${text.slice(0, OLD_RESULT_CHARS)}\n[... ${text.length - OLD_RESULT_CHARS} characters left out to save room; read the file or run the command again to see it]`;
+
+type Part = { type?: string; input?: Record<string, unknown>; output?: { type?: string; value?: unknown } };
+
+/**
+ * The history as sent: everything before the latest tool results is cut down
+ * (results and written file contents shortened, earlier thinking dropped), so
+ * a long agent session fits a small model's context; `messages` keeps it all.
+ */
+export function forModel(messages: Msg[]): Msg[] {
+  let recent = messages.length;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'tool') {
+      recent = Math.max(0, i - 1); // its assistant message with the calls
+      break;
+    }
+  }
+  return messages.map((m, i) => {
+    if (i >= recent || !Array.isArray(m.content)) return m;
+    if (m.role === 'tool') {
+      return {
+        ...m,
+        content: (m.content as Part[]).map((p) =>
+          p.output?.type === 'text' && typeof p.output.value === 'string' ? { ...p, output: { ...p.output, value: shorten(p.output.value) } } : p,
+        ),
+      };
+    }
+    if (m.role === 'assistant') {
+      return {
+        ...m,
+        content: (m.content as Part[])
+          .filter((p) => p.type !== 'reasoning')
+          .map((p) =>
+            p.type === 'tool-call' && p.input
+              ? { ...p, input: Object.fromEntries(Object.entries(p.input).map(([k, v]) => [k, typeof v === 'string' ? shorten(v) : v])) }
+              : p,
+          ),
+      };
+    }
+    return m;
+  });
+}
+
+/**
+ * One user turn: post, and while the model calls client tools, run them (once
+ * approved), append the results and post again. Appends everything to
+ * `messages`, so the history holds the calls and results as the model saw them.
+ */
 
 export async function runTurn(
   messages: Msg[],
@@ -198,10 +249,11 @@ export async function runTurn(
     const calls: Extract<ChatEvent, { t: 'tool-call' }>[] = [];
     let reply: Msg[] | undefined;
     let text = '';
+    let failed = false;
     try {
       await streamChat(
         {
-          messages,
+          messages: forModel(messages),
           system: opts.system,
           model: opts.model,
           reasoning: opts.reasoning,
@@ -211,6 +263,7 @@ export async function runTurn(
           if (event.t === 'tool-call') calls.push(event);
           else if (event.t === 'messages') reply = event.v;
           else if (event.t === 'text') text += event.v ?? '';
+          else if (event.t === 'error') failed = true;
           onEvent(event);
         },
         signal,
@@ -226,12 +279,12 @@ export async function runTurn(
     }
     // Small models now and then end a turn with nothing at all (no text, no
     // tool call); ask once more instead of leaving the user with a blank reply.
-    if (calls.length === 0 && !text.trim() && !retried) {
+    if (calls.length === 0 && !text.trim() && !retried && !failed) {
       retried = true;
       round--;
       continue;
     }
-    messages.push(...(reply ?? [{ role: 'assistant', content: text }]));
+    messages.push(...(reply ?? [{ role: 'assistant', content: text || (failed ? '[no reply: the request failed]' : '') }]));
     // Without the API's copy of the call there is nothing to answer.
     if (calls.length === 0 || !reply) return;
 

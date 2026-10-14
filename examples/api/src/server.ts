@@ -516,7 +516,21 @@ app.post('/chat', requireUser, async (req, res) => {
   res.setHeader('content-type', 'application/x-ndjson; charset=utf-8');
   res.setHeader('cache-control', 'no-cache');
   const write = (event: Record<string, unknown>) => res.write(`${JSON.stringify(event)}\n`);
+  // A long prompt can take minutes to read on CPU before the first token
+  // (Gemma: ~50 tokens/s). Headers now and a line every 20 s keep the client's
+  // fetch, which gives up after 300 s of silence, waiting.
+  res.flushHeaders();
+  const ping = setInterval(() => write({ t: 'ping' }), 20_000);
+  res.on('close', () => clearInterval(ping));
 
+  // One error per failed request: after it, the SDK's "No output generated"
+  // only repeats it.
+  let failed = false;
+  const fail = (error: unknown) => {
+    if (failed) return;
+    failed = true;
+    write({ t: 'error', v: tooLong(describeError(error), chatModelId) });
+  };
   try {
     for await (const part of result.stream) {
       switch (part.type) {
@@ -552,17 +566,29 @@ app.post('/chat', requireUser, async (req, res) => {
           write({ t: 'finish', reason: part.finishReason, usage: part.totalUsage });
           break;
         case 'error':
-          write({ t: 'error', v: describeError(part.error) });
+          fail(part.error);
           break;
       }
     }
-    if (hasClientTools) write({ t: 'messages', v: (await result.response).messages });
+    if (hasClientTools && !failed) write({ t: 'messages', v: (await result.response).messages });
   } catch (err) {
     // The stream itself failed; tell the client rather than hanging up silently.
-    write({ t: 'error', v: describeError(err) });
+    fail(err);
   }
+  clearInterval(ping);
   res.end();
 });
+
+/**
+ * llama.cpp's "request (10673 tokens) exceeds the available context size (8192
+ * tokens), try increasing it", said in terms of what the user can do.
+ */
+function tooLong(message: string, modelId: string): string {
+  const m = /request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\)/.exec(message);
+  return m
+    ? `This chat (${m[1]} tokens) no longer fits ${modelId}'s context (${m[2]} tokens per request). Start a new one with /clear, or switch to a model with more room with /model.`
+    : message;
+}
 
 /**
  * Web chat, as autonomous-chatbot's src/routes/api/chat/+server.ts:

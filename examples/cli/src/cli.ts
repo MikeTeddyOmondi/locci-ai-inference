@@ -470,26 +470,34 @@ program
   .option('--no-think', "never let the model think first (default: the API decides per model)")
   .option('--yolo', 'run commands without asking (toggle in the chat with /auto)')
   .option('--cwd <dir>', 'folder commands run in (default: where you ran it)', START_DIR)
-  .action((opts: { system?: string; model?: string; shell: boolean; think: boolean; yolo?: boolean; cwd: string }) => {
+  .action(async (opts: { system?: string; model?: string; shell: boolean; think: boolean; yolo?: boolean; cwd: string }) => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const tuiPath = path.join(here, 'tui.tsx');
 
     // The OpenTUI renderer needs Bun (or Node 26.4+ with --experimental-ffi).
     // If we're already under Bun, reuse this executable; otherwise spawn `bun`.
     const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
-    const runtime = isBun ? process.execPath : 'bun';
+    const settings: Record<string, string> = {
+      ...(opts.system ? { SYSTEM_PROMPT: opts.system } : {}),
+      ...(opts.model ? { LOCCI_MODEL: opts.model } : {}),
+      LOCCI_SHELL: opts.shell ? '1' : '0',
+      LOCCI_THINK: opts.think ? '1' : '0',
+      LOCCI_YOLO: opts.yolo ? '1' : '0',
+      LOCCI_CWD: path.resolve(opts.cwd),
+    };
 
-    const child = spawn(runtime, [tuiPath], {
+    // Under Bun (bun src/cli.ts, or the binary from `pnpm build`, which has no
+    // tui.tsx beside it) the TUI runs in this process; it reads its settings
+    // from the environment when it loads.
+    if (isBun) {
+      Object.assign(process.env, settings);
+      await import('./tui.js');
+      return;
+    }
+
+    const child = spawn('bun', [tuiPath], {
       stdio: 'inherit',
-      env: {
-        ...process.env,
-        ...(opts.system ? { SYSTEM_PROMPT: opts.system } : {}),
-        ...(opts.model ? { LOCCI_MODEL: opts.model } : {}),
-        LOCCI_SHELL: opts.shell ? '1' : '0',
-        LOCCI_THINK: opts.think ? '1' : '0',
-        LOCCI_YOLO: opts.yolo ? '1' : '0',
-        LOCCI_CWD: path.resolve(opts.cwd),
-      },
+      env: { ...process.env, ...settings },
     });
 
     // Forward termination signals so the child can restore the terminal and

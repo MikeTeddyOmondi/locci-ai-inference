@@ -240,6 +240,12 @@ examples-api: sdk-build
 examples-cli *args:
     LOCCI_CWD="{{invocation_directory()}}" pnpm --filter @locci/example-ai-cli exec tsx src/cli.ts {{args}}
 
+# Compile the CLI (TUI included) for this machine into examples/cli/bin/locci-chat
+# (git-ignored). It runs where it is started, e.g. from a test folder:
+# ../examples/cli/bin/locci-chat tui
+examples-cli-build:
+    pnpm --filter @locci/example-ai-cli build
+
 # Run the OpenTUI terminal chat (needs Bun); commands run in the folder you ran it in
 examples-tui:
     cd examples/cli && LOCCI_CWD="{{invocation_directory()}}" bun src/tui.tsx

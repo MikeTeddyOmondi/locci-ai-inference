@@ -8,7 +8,10 @@ packages/*/dist/
 node-compile-cache/
 tsx-*/
 examples/api/mcp.json
+examples/cli/bin/
 examples/api/data/
 examples/web/build/
 examples/web/.svelte-kit/
 __pycache__/
+# Scratch folder for trying the CLI agent (folder trust, file edits)
+/tmp/

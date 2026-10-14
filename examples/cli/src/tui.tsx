@@ -884,6 +884,7 @@ function App() {
       parts.find((p): p is ToolPart => p.kind === 'tool' && p.id === id);
 
     const onEvent = (event: ChatEvent) => {
+      if (event.t === 'ping') return;
       setThinking(event.t === 'thinking');
       switch (event.t) {
         case 'text':

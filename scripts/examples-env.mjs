@@ -13,6 +13,7 @@
 //   LOCCI_AUTH_URL default http://localhost:8787
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -83,7 +84,7 @@ if (!fs.existsSync(apiEnv) || force) {
     '',
     '# MCP, from locci-chat-cli/.env',
     `MCP_ENABLED=${cli.MCP_ENABLED ?? '0'}`,
-    'MCP_CONFIG=./mcp.json',
+    '# MCP_CONFIG unset: the servers are in ~/.locci/ai/mcp.json (shared with the CLI)',
     `MCP_COMMAND=${cli.MCP_COMMAND ?? ''}`,
     `MCP_ARGS=${cli.MCP_ARGS ?? ''}`,
     '',
@@ -95,10 +96,15 @@ if (!fs.existsSync(apiEnv) || force) {
   console.log('· examples/api/.env exists; skipped (use --force to rebuild)');
 }
 
-const mcpJson = path.join(root, 'examples/api/mcp.json');
+// Into ~/.locci/ai (LOCCI_AI_DIR), where the CLI keeps its files and the API
+// looks when it has no MCP_CONFIG; owner-only, as it holds keys.
+const aiDir = process.env.LOCCI_AI_DIR || path.join(os.homedir(), '.locci', 'ai');
+const mcpJson = path.join(aiDir, 'mcp.json');
 if (!fs.existsSync(mcpJson) && fs.existsSync(path.join(chatCli, 'mcp.json'))) {
+  fs.mkdirSync(aiDir, { recursive: true, mode: 0o700 });
   fs.copyFileSync(path.join(chatCli, 'mcp.json'), mcpJson);
-  console.log('✓ copied mcp.json from locci-chat-cli');
+  fs.chmodSync(mcpJson, 0o600);
+  console.log(`✓ copied mcp.json from locci-chat-cli to ${mcpJson}`);
 }
 
 for (const app of ['cli', 'web']) {

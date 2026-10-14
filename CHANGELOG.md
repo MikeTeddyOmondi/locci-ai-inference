@@ -62,6 +62,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Ursula store appends only and KrakenD /v1/streams forwards to the Ursula gateway (events.locci.cloud, template stack locally) (`6d3c01f`)
 - /v1/streams back to this repo's Ursula service; events.locci.cloud is the production backend (`85856e1`)
 - Record the browser sign-in check in BACKLOG.md (`86cc15e`)
+- the CLI keeps its login, history and trusted folders in ~/.locci/ai (moved there on first use), and the API reads ~/.locci/ai/mcp.json when it has no MCP config (`1850b94`)
 
 ### Fixed
 

@@ -15,7 +15,8 @@
     "ask": "tsx src/cli.ts ask",
     "mcp": "tsx src/cli.ts mcp list",
     "tui": "bun src/tui.tsx",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bun scripts/build.ts"
   },
   "dependencies": {
     "@openauthjs/openauth": "0.4.3",
