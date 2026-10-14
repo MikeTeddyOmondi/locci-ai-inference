@@ -5,14 +5,16 @@
 
 import { authHeaders, explain401 } from './auth.js';
 import { applyEdit, exists, planEdit, readTool, unchanged, writeTool } from './files.js';
-import { describeResult, runShell } from './shell.js';
+import { describeResult, installsOutside, runShell } from './shell.js';
+import { describeTasks, findTask, firstOutput, startTask, stopTask, tail, taskStatus } from './tasks.js';
 
 /** The client tools `chat` and the TUI run. */
-const CLIENT_TOOLS = ['shell', 'read_file', 'write_file', 'edit_file'];
+const CLIENT_TOOLS = ['shell', 'read_file', 'write_file', 'edit_file', 'tasks'];
 
 /** What needs a yes first. Reads don't: they stay inside the folder. */
 export type Action =
-  | { kind: 'shell'; command: string }
+  | { kind: 'shell'; command: string; background?: boolean }
+  | { kind: 'stop'; id: number; command: string }
   | { kind: 'write'; path: string; content: string; creates: boolean }
   | { kind: 'edit'; path: string; find: string; replace: string; count: number };
 
@@ -36,7 +38,17 @@ export type ChatEvent =
       t: 'tool-call';
       id: string;
       name: string;
-      input?: { command?: string; path?: string; content?: string; old_text?: string; new_text?: string; all?: boolean };
+      input?: {
+        command?: string;
+        background?: boolean;
+        path?: string;
+        content?: string;
+        old_text?: string;
+        new_text?: string;
+        all?: boolean;
+        action?: string;
+        id?: number;
+      };
     }
   | { t: 'tool-done'; id: string; output?: string; error?: string }
   | { t: 'finish'; reason?: string; usage?: Record<string, unknown> }
@@ -46,8 +58,14 @@ export type ChatEvent =
   | { t: 'messages'; v: Msg[] }
   | { t: 'error'; v?: string };
 
-/** Rounds of "model asks, CLI runs, model reads" in one turn, as the API's own tool loop. */
-const MAX_ROUNDS = 8;
+/**
+ * Rounds of "model asks, CLI runs, model reads" in one turn. Only a backstop:
+ * Esc stops a turn, and a model going in circles is caught by REPEATS below.
+ * Working down a TODO list took more than the 8 this started with.
+ */
+const MAX_ROUNDS = Number(process.env.LOCCI_MAX_ROUNDS) || 30;
+/** The same call with the same result this many times in a turn: it is stuck. */
+const REPEATS = 3;
 
 /**
  * POST the conversation and call onEvent for each NDJSON line. Shared by
@@ -127,8 +145,12 @@ export function editPreview(action: Extract<Action, { kind: 'edit' }>, max = 8):
 }
 
 /** A one-line label for a client tool call, for the terminal. */
-export function toolLabel(name: string, input: { command?: string; path?: string } | undefined): string {
-  if (name === 'shell') return `$ ${input?.command ?? ''}`;
+export function toolLabel(
+  name: string,
+  input: { command?: string; path?: string; background?: boolean; action?: string; id?: number } | undefined,
+): string {
+  if (name === 'shell') return `$ ${input?.command ?? ''}${input?.background ? ' &' : ''}`;
+  if (name === 'tasks') return `tasks ${input?.action ?? 'list'}${input?.id != null ? ` #${input.id}` : ''}`;
   if (name === 'read_file') return `read ${input?.path ?? ''}`;
   if (name === 'write_file') return `write ${input?.path ?? ''}`;
   if (name === 'edit_file') return `edit ${input?.path ?? ''}`;
@@ -146,8 +168,18 @@ async function runClientTool(
     case 'shell': {
       const command = input.command?.trim();
       if (!command) return 'Empty command: nothing was run.';
-      if (!(await opts.approve({ kind: 'shell', command }))) {
+      const outside = installsOutside(command, opts.cwd);
+      if (outside) return outside;
+      const background = input.background === true;
+      if (!(await opts.approve({ kind: 'shell', command, background }))) {
         return `${DECLINED_PREFIX} to run this command. It was not run.`;
+      }
+      if (background) {
+        const task = startTask(command, opts.cwd, 'model');
+        await firstOutput(task);
+        return task.state === 'running'
+          ? `Started task #${task.id} in the background; it keeps running. Its output so far:\n${tail(task, 2_000)}`
+          : `Task #${task.id} ${taskStatus(task)}:\n${tail(task, 2_000)}`;
       }
       return describeResult(await runShell(command, opts.cwd, signal));
     }
@@ -173,6 +205,21 @@ async function runClientTool(
       const action: Action = { kind: 'edit', path: input.path, find: input.old_text, replace: input.new_text, count: plan.count };
       if (!(await opts.approve(action))) return `${DECLINED_PREFIX} this edit. ${input.path} was not changed.`;
       return applyEdit(input.path, plan);
+    }
+    case 'tasks': {
+      if (input.action === 'list' || input.action === undefined) return describeTasks();
+      const task = typeof input.id === 'number' ? findTask(input.id) : undefined;
+      if (!task) return `No task ${input.id ?? ''}. ${describeTasks()}`;
+      if (input.action === 'output') return `#${task.id} ${task.command} (${taskStatus(task)}):\n${tail(task)}`;
+      if (input.action === 'stop') {
+        if (task.state !== 'running') return `#${task.id} is not running (${taskStatus(task)}).`;
+        if (!(await opts.approve({ kind: 'stop', id: task.id, command: task.command }))) {
+          return `${DECLINED_PREFIX} to stop task #${task.id}. It is still running.`;
+        }
+        stopTask(task);
+        return `Stopped task #${task.id} (${task.command}).`;
+      }
+      return 'tasks needs action list, output or stop.';
     }
     default:
       return `Unknown tool: ${call.name}`;
@@ -279,6 +326,7 @@ export async function runTurn(
   signal?: AbortSignal,
 ): Promise<void> {
   let retried = false;
+  const seen = new Map<string, number>();
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const calls: Extract<ChatEvent, { t: 'tool-call' }>[] = [];
     let reply: Msg[] | undefined;
@@ -316,7 +364,7 @@ export async function runTurn(
     // Without the API's copy of the call there is nothing to answer.
     if (calls.length === 0 || !reply) return;
 
-    const results = [];
+    const results: { type: string; toolCallId: string; toolName: string; output: { type: string; value: string } }[] = [];
     for (const call of calls) {
       // Every call needs a result, stopped or not, or the history is invalid.
       const result = signal?.aborted
@@ -339,8 +387,21 @@ export async function runTurn(
     }
     messages.push({ role: 'tool', content: results });
     if (signal?.aborted) throw aborted();
+
+    // A model in a loop (the same failing `npm start`, the same edit that
+    // can't apply) is stopped here rather than at MAX_ROUNDS.
+    const stuck = calls.find((call, i) => {
+      const key = JSON.stringify([call.name, call.input, results[i].output.value]);
+      const n = (seen.get(key) ?? 0) + 1;
+      seen.set(key, n);
+      return n >= REPEATS;
+    });
+    if (stuck) {
+      onEvent({ t: 'error', v: `stopped: it ran ${toolLabel(stuck.name, stuck.input)} ${REPEATS} times with the same result. Say what to do differently, or "continue".` });
+      return;
+    }
   }
-  onEvent({ t: 'error', v: `stopped after ${MAX_ROUNDS} rounds of tool calls; say "continue" to let it go on` });
+  onEvent({ t: 'error', v: `paused after ${MAX_ROUNDS} rounds of tool calls (LOCCI_MAX_ROUNDS); say "continue" to let it go on` });
 }
 
 /** A model the API offers (GET /models). */

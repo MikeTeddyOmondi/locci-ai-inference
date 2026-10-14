@@ -24,6 +24,7 @@ import {
 import { clipboardImage, imagePaths, loadImage, type ImageAttachment } from './images.js';
 import { loadHistory, remember } from './history.js';
 import { runShell, userRanNote, type ShellResult } from './shell.js';
+import { findTask, listTasks, onTasksChange, startTask, stopTask, tail, taskStatus, type Task } from './tasks.js';
 import { isTrusted, trust, TRUST_QUESTION } from './trust.js';
 
 const SYSTEM = process.env.SYSTEM_PROMPT;
@@ -35,7 +36,7 @@ const YOLO = process.env.LOCCI_YOLO === '1';
 const THINK: ThinkSetting = process.env.LOCCI_THINK === '0' ? 'off' : 'auto';
 // As in cli.ts: gemma-4-e2b unless LOCCI_MODEL says otherwise.
 const MODEL = process.env.LOCCI_MODEL || 'gemma-4-e2b';
-const CLIENT_TOOL_NAMES = new Set(['shell', 'read_file', 'write_file', 'edit_file']);
+const CLIENT_TOOL_NAMES = new Set(['shell', 'read_file', 'write_file', 'edit_file', 'tasks']);
 
 /** Composer height in text rows: it grows with the draft up to this. */
 const MAX_COMPOSER_ROWS = 8;
@@ -171,7 +172,9 @@ const COMMANDS: { name: string; help: string; key: string }[] = [
   { name: '/model', help: 'list or switch models', key: '' },
   { name: '/auto', help: 'YOLO mode: run commands without asking', key: '' },
   { name: '/think', help: 'thinking: on, off or auto', key: '' },
-  { name: '!<cmd>', help: 'run a command here yourself', key: '' },
+  { name: '/tasks', help: 'background tasks and their output', key: 'ctrl+b' },
+  { name: '/kill', help: 'stop a background task: /kill <n>', key: '' },
+  { name: '!<cmd>', help: 'run a command here yourself (end with & for the background)', key: '' },
   { name: '/exit', help: 'quit', key: 'ctrl+c' },
 ];
 
@@ -329,6 +332,11 @@ function App() {
   const [thinking, setThinking] = useState(false);
   // A short message in the hint line (an image that couldn't be added).
   const [flash, setFlash] = useState('');
+  // Background tasks (src/tasks.ts), and whether ctrl+b's panel is open.
+  const [tasks, setTasks] = useState<Task[]>(listTasks());
+  const [showTasks, setShowTasks] = useState(false);
+  const showTasksRef = useRef(false);
+  showTasksRef.current = showTasks;
   // The model in use: --model, or one that reads images once the chat has one.
   const [activeModel, setActiveModel] = useState<string | undefined>(MODEL);
   const [models, setModels] = useState<{ default: string; models: ModelInfo[] } | null>(null);
@@ -346,6 +354,9 @@ function App() {
   const toolFocusRef = useRef(-1);
   const yoloRef = useRef(YOLO);
   const answerRef = useRef<((ok: boolean) => void) | null>(null);
+  // Read by the keyboard handler: `a` only answers a command, write or edit.
+  const approvalRef = useRef(approval);
+  approvalRef.current = approval;
   // What the model sees: user text, its replies, tool calls and results.
   const historyRef = useRef<ModelMsg[]>([]);
   // `!command` output, sent along with the next message so the model sees it.
@@ -551,10 +562,19 @@ function App() {
   );
 
   useKeyboard((key) => {
+    // The textarea takes ctrl+c before the renderer's exitOnCtrlC sees it:
+    // quit here, at any prompt, through process.exit so commands and tasks stop too.
+    if (key.ctrl && key.name === 'c') return quit();
     // Something is waiting: only y allows it; n or Esc declines.
     // Esc during a reply also stops it.
     if (answerRef.current) {
       if (key.name === 'y') answerRef.current(true);
+      else if (key.name === 'a' && approvalRef.current?.action) {
+        // Yes, and YOLO mode from here on (as /auto).
+        yoloRef.current = true;
+        setYolo(true);
+        answerRef.current(true);
+      }
       else if (key.name === 'n' || key.name === 'escape') {
         answerRef.current(false);
         if (key.name === 'escape') stopRef.current?.abort();
@@ -569,6 +589,7 @@ function App() {
     } else if (key.ctrl && key.name === 'v') pasteClipboardImage();
     else if (key.ctrl && key.name === 'l') askClear();
     else if (key.ctrl && key.name === 'h') setShowHelp((v) => !v);
+    else if (key.ctrl && key.name === 'b') setShowTasks((v) => !v);
     else if (key.ctrl && key.name === 't') {
       // Toggle the focused tool call open/closed.
       const ids = toolIdsRef.current;
@@ -636,6 +657,17 @@ function App() {
         }
         return true;
       }
+      if (text === '/kill' || text.startsWith('/kill ')) {
+        const task = findTask(Number(text.slice('/kill'.length).trim().replace(/^#/, '')));
+        note(
+          !task
+            ? 'Use /kill <n>, with a task number from /tasks (ctrl+b).'
+            : stopTask(task)
+              ? `Stopped #${task.id} \`${task.command}\`.`
+              : `#${task.id} is not running (${taskStatus(task)}).`,
+        );
+        return true;
+      }
       switch (text.startsWith('/think ') ? '/think' : text) {
         case '/think': {
           const next = parseThink(text, thinkRef.current);
@@ -668,6 +700,10 @@ function App() {
         case '/clear':
           askClear();
           return true;
+        case '/tasks':
+          setShowTasks(true);
+          if (listTasks().length === 0) note('No background tasks. Start one with `!<command> &`, or ask for a server to be started.');
+          return true;
         case '/help':
           setShowHelp(true);
           return true;
@@ -697,6 +733,22 @@ function App() {
     },
     [quit, clear, askClear, footer, note, warm],
   );
+
+  // Task changes, and a tick every 5 s while one runs, for "running 2m".
+  useEffect(() => {
+    // New output only matters while ctrl+b's panel shows it; otherwise a
+    // chatty server would redraw the screen several times a second.
+    const off = onTasksChange((outputOnly) => {
+      if (!outputOnly || showTasksRef.current) setTasks(listTasks());
+    });
+    const tick = setInterval(() => {
+      if (listTasks().some((t) => t.state === 'running')) setTasks(listTasks());
+    }, 5_000);
+    return () => {
+      off();
+      clearInterval(tick);
+    };
+  }, []);
 
   useEffect(() => {
     loadHistory().then((entries) => {
@@ -741,7 +793,14 @@ function App() {
               resolve(ok);
             };
             if (action.kind === 'shell') {
-              setApproval({ title: `$ ${action.command}`, lines: [], question: `Run in ${CWD}?`, action: true });
+              setApproval({
+                title: `$ ${action.command}`,
+                lines: action.background ? ['in the background: it keeps running, listed under the input'] : [],
+                question: `Run in ${CWD}?`,
+                action: true,
+              });
+            } else if (action.kind === 'stop') {
+              setApproval({ title: `Stop task #${action.id}: ${action.command}`, lines: [], question: 'Stop it?', action: true });
             } else if (action.kind === 'edit') {
               setApproval({
                 title: `Edit ${action.path}${action.count > 1 ? ` (${action.count} places)` : ''}`,
@@ -803,6 +862,13 @@ function App() {
       const command = full.slice(1).trim();
       if (!command) {
         note(`Type a command after the !, e.g. !ls. It runs in ${CWD}.`);
+        return;
+      }
+      // `!npm start &`: a background task, listed under the input.
+      if (/\s&$/.test(command) && !/&&$/.test(command)) {
+        const task = startTask(command.replace(/\s*&$/, ''), CWD, 'you');
+        ranRef.current = [...ranRef.current, `[I started \`${task.command}\` in the background myself as task #${task.id}.]`];
+        note(`Started #${task.id} \`${task.command}\` in the background. ctrl+b shows its output, /kill ${task.id} stops it.`);
         return;
       }
       streamingRef.current = true;
@@ -970,7 +1036,7 @@ function App() {
               if (result.startsWith(DECLINED_PREFIX)) t.error = 'declined';
               // A failed command or an edit that couldn't apply reads as a
               // failure (red, first line in the row), not as done.
-              else if (/^(exit code [1-9]|timed out|failed to start|stopped by|\[stopped|Nothing changed|old_text |Could not |edit_file needs)/.test(result)) t.error = result;
+              else if (/^(exit code [1-9]|timed out|failed to start|stopped by|\[stopped|Nothing changed|Not run:|old_text |Could not |edit_file needs)/.test(result)) t.error = result;
               else t.output = result;
               t.ms = Date.now() - (started.get(id) ?? Date.now());
             }
@@ -1020,7 +1086,9 @@ function App() {
   const hint = flash
     ? flash
     : approval
-    ? 'y yes · n no'
+    ? approval.action
+      ? 'y yes · n no · a yes to all'
+      : 'y yes · n no'
     : streaming
     ? thinking
       ? 'thinking… · esc to stop'
@@ -1206,7 +1274,8 @@ function App() {
               <text fg={C.dim}> yes   </text>
               <text fg={C.accent}>n</text>
               <text fg={C.dim}> no   </text>
-              {width >= 70 && approval.action ? <text fg={C.dim}>(/auto stops asking)</text> : null}
+              {approval.action ? <text fg={C.accent}>a</text> : null}
+              {approval.action ? <text fg={C.dim}> yes to all (YOLO mode, /auto turns it off)</text> : null}
             </box>
           </box>
         ) : null}
@@ -1268,6 +1337,56 @@ function App() {
           />
         </box>
       </box>
+
+      {/* ctrl+b: each task with the end of its output. */}
+      {showTasks ? (
+        <box
+          style={{
+            flexDirection: 'column',
+            flexShrink: 0,
+            border: true,
+            borderColor: C.dim,
+            backgroundColor: C.panel,
+            paddingLeft: 1,
+            paddingRight: 1,
+          }}
+        >
+          {tasks.length === 0 ? <text fg={C.dim}>No background tasks. Start one with !command &</text> : null}
+          {tasks.slice(-5).map((t) => (
+            <box key={t.id} style={{ flexDirection: 'column', flexShrink: 0 }}>
+              <box style={{ flexDirection: 'row', flexShrink: 0 }}>
+                <text fg={t.state === 'running' ? C.agent : C.dim}>{fit(`#${t.id} ${t.command}`, width - 30)}</text>
+                <text fg={t.state === 'exited' && t.exitCode ? C.warn : C.dim}>{`  ${taskStatus(t)} · by ${t.by}`}</text>
+              </box>
+              {tail(t, 2_000)
+                .split('\n')
+                .slice(-3)
+                .map((line, i) => (
+                  <text key={i} fg={C.dim}>
+                    {fit(`  ${line}`, width - 6)}
+                  </text>
+                ))}
+            </box>
+          ))}
+          <text fg={C.dim}>/kill n stops one · ctrl+b closes</text>
+        </box>
+      ) : null}
+
+      {/* Background tasks still running, under the input. */}
+      {!showTasks && tasks.some((t) => t.state === 'running') ? (
+        <box style={{ flexDirection: 'row', height: 1, flexShrink: 0 }}>
+          <text fg={C.agent}>
+            {fit(
+              `${tasks
+                .filter((t) => t.state === 'running')
+                .map((t) => `⏵ #${t.id} ${t.command} (${taskStatus(t)})`)
+                .join('   ')}`,
+              width - 24,
+            )}
+          </text>
+          <text fg={C.dim}>{'  ctrl+b details'}</text>
+        </box>
+      ) : null}
 
       <box
         style={{ flexDirection: 'row', justifyContent: 'space-between', height: 1, flexShrink: 0 }}

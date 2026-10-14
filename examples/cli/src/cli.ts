@@ -24,6 +24,7 @@ import {
   type ThinkSetting,
 } from './agent.js';
 import { runShell, userRanNote } from './shell.js';
+import { findTask, listTasks, startTask, stopTask, tail, taskStatus } from './tasks.js';
 import { isTrusted, trust, TRUST_QUESTION } from './trust.js';
 
 // Ported from locci-chat-cli's src/cli.ts. A pure client of the example API
@@ -238,7 +239,7 @@ program
     input.on('keypress', onKey);
     process.once('SIGTERM', shutdown);
 
-    console.log('locci-chat: type a message. Esc stops a reply, !<command> runs a command here, /model switches models, /auto toggles YOLO mode, /think toggles thinking, /exit quits.');
+    console.log('locci-chat: type a message. Esc stops a reply, !<command> runs a command here (end it with & for the background, /tasks lists those), /model switches models, /auto toggles YOLO mode, /think toggles thinking, /exit quits.');
 
     // A folder is asked about once, then remembered (src/trust.ts).
     let shell = opts.shell;
@@ -269,7 +270,9 @@ program
 
     const approve = async (action: Action): Promise<boolean> => {
       if (action.kind === 'shell') {
-        output.write(`\n${dim('$')} ${action.command}\n`);
+        output.write(`\n${dim('$')} ${action.command}${action.background ? dim('  (in the background)') : ''}\n`);
+      } else if (action.kind === 'stop') {
+        output.write(`\n${dim('■')} Stop task #${action.id}: ${action.command}\n`);
       } else if (action.kind === 'edit') {
         const where = action.count > 1 ? ` (${action.count} places)` : '';
         output.write(`\n${dim('✎')} Edit ${action.path}${where}\n${dim(editPreview(action).map((l) => `  ${l}`).join('\n'))}\n`);
@@ -278,12 +281,24 @@ program
         output.write(`\n${dim('✎')} ${action.creates ? 'Create' : 'Replace'} ${action.path} (${lines} lines)\n${preview(action.content, 15)}\n`);
       }
       if (yolo) return true;
-      // Each one gets its own answer; /auto is the only way to stop asking.
+      // Each one gets its own answer, until `a` or /auto stops the asking.
+      // a: yes, and YOLO mode from here on (as /auto).
       const question =
-        action.kind === 'shell' ? `Run in ${cwd}? [y/N] ` : action.kind === 'edit' ? 'Make this edit? [y/N] ' : 'Write it? [y/N] ';
+        action.kind === 'shell'
+          ? `Run in ${cwd}? [y/N/a] `
+          : action.kind === 'stop'
+            ? 'Stop it? [y/N/a] '
+            : action.kind === 'edit'
+              ? 'Make this edit? [y/N/a] '
+              : 'Write it? [y/N/a] ';
       // Esc at the question stops the turn too.
       const signal = stream ? AbortSignal.any([session.signal, stream.signal]) : session.signal;
       const answer = (await rl.question(question, { signal })).trim().toLowerCase();
+      if (answer === 'a' || answer === 'all') {
+        yolo = true;
+        output.write(dim('YOLO mode on: the rest run without asking. /auto turns it off.\n'));
+        return true;
+      }
       return answer === 'y' || answer === 'yes';
     };
 
@@ -339,12 +354,29 @@ program
           continue;
         }
 
+        if (line === '/tasks') {
+          for (const t of listTasks()) console.log(`#${t.id} ${t.command} ${dim(`(${taskStatus(t)}, by ${t.by})`)}\n${preview(tail(t, 600), 4)}`);
+          console.log(dim(listTasks().length ? 'Stop one with /kill <n>.\n' : 'No background tasks. Start one with !<command> &.\n'));
+          continue;
+        }
+        if (line === '/kill' || line.startsWith('/kill ')) {
+          const task = findTask(Number(line.slice('/kill'.length).trim().replace(/^#/, '')));
+          console.log(dim(!task ? 'Use /kill <n>, with a number from /tasks.\n' : stopTask(task) ? `Stopped #${task.id} ${task.command}.\n` : `#${task.id} is not running (${taskStatus(task)}).\n`));
+          continue;
+        }
         if (line.startsWith('!')) {
           // The user's own command: runs at once, no approval, even with
           // --no-shell (that flag is about the model).
           const command = line.slice(1).trim();
           if (!command) {
             console.log(dim(`Type a command after the !, e.g. !ls. It runs in ${cwd}.\n`));
+            continue;
+          }
+          // `!npm start &`: a background task (/tasks lists them).
+          if (/\s&$/.test(command) && !/&&$/.test(command)) {
+            const task = startTask(command.replace(/\s*&$/, ''), cwd, 'you');
+            console.log(dim(`Started #${task.id} in the background. /tasks lists them, /kill ${task.id} stops it.\n`));
+            ran.push(`[I started \`${task.command}\` in the background myself as task #${task.id}.]`);
             continue;
           }
           stream = new AbortController();
@@ -433,6 +465,9 @@ program
       rl.close();
       // Leave the cursor on a clean line whichever way we got here.
       output.write(closing ? 'interrupted.\n' : '\nbye.\n');
+      // A background task keeps the event loop alive: exit outright, which
+      // stops every command and task (src/procs.ts).
+      process.exit(process.exitCode ?? 0);
     }
   });
 

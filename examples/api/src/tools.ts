@@ -200,9 +200,24 @@ export const CLIENT_TOOLS: ToolSet = {
     description:
       "Run a shell command on the user's machine, in their project folder. Use it to look around, run " +
       'programs, tests and builds, or install what a task needs. Not for writing files: use write_file. The ' +
-      'user approves each command and may decline. Returns the exit code and the output (long output is cut).',
+      'user approves each command and may decline. Returns the exit code and the output (long output is cut). ' +
+      'For a command that keeps running (a server, a watcher, npm start, npm run dev), set background to true: ' +
+      'it starts as a task, you get its first output and a task id, and it keeps running while you go on.',
     inputSchema: z.object({
       command: z.string().describe('The command line to run, as typed in a terminal'),
+      background: z
+        .boolean()
+        .optional()
+        .describe('true for a command that does not finish on its own (servers, watchers); check it with tasks'),
+    }),
+  }),
+  tasks: tool({
+    description:
+      'The commands running in the background (started with shell and background true). action "list" shows ' +
+      'them; "output" returns the latest output of task id; "stop" stops task id (the user approves it).',
+    inputSchema: z.object({
+      action: z.enum(['list', 'output', 'stop']),
+      id: z.number().int().optional().describe('The task id, for output and stop'),
     }),
   }),
   read_file: tool({
@@ -253,6 +268,8 @@ export function shellPrompt(client: { cwd?: unknown; platform?: unknown; files?:
       'folder", "the project" and "here" mean it: use relative paths (ls, cat package.json), not system folders.',
     'Do exactly what the user asked, all of it. Never ask whether a file exists or what it says: look with ' +
       'read_file or ls. Do not ask the user to run commands you can run yourself.',
+    'A command that keeps running (a server, a watcher, npm start) needs shell with background true; without ' +
+      'it, it is stopped after 2 minutes. Check a running one with tasks (output), stop it with tasks (stop).',
   ];
   if (client.files) {
     rules.push(
