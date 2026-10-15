@@ -1069,6 +1069,7 @@ function App() {
   }, [runCommand, approve, setInput, note]);
 
   const empty = messages.length === 0 || showHelp;
+  const runningCount = tasks.filter((t) => t.state === 'running').length;
 
   // Every tool call in the transcript, flattened, so ctrl+t / ctrl+↑↓ can walk
   // them regardless of which turn they belong to.
@@ -1373,15 +1374,17 @@ function App() {
       ) : null}
 
       {/* Background tasks still running, under the input. */}
-      {!showTasks && tasks.some((t) => t.state === 'running') ? (
+      {!showTasks && runningCount > 0 ? (
         <box style={{ flexDirection: 'row', height: 1, flexShrink: 0 }}>
-          <text fg={C.agent}>
+          {/* The count first, so it shows however long the commands are. */}
+          <text fg={C.agent}>{`⏵ ${runningCount} task${runningCount === 1 ? '' : 's'}`}</text>
+          <text fg={C.dim}>
             {fit(
-              `${tasks
+              `  ${tasks
                 .filter((t) => t.state === 'running')
-                .map((t) => `⏵ #${t.id} ${t.command} (${taskStatus(t)})`)
-                .join('   ')}`,
-              width - 24,
+                .map((t) => `#${t.id} ${t.command} (${taskStatus(t).replace('running ', '')})`)
+                .join(' · ')}`,
+              width - 32,
             )}
           </text>
           <text fg={C.dim}>{'  ctrl+b details'}</text>
