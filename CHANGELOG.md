@@ -66,6 +66,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - Record the browser sign-in check in BACKLOG.md (`86cc15e`)
 - the CLI keeps its login, history and trusted folders in ~/.locci/ai (moved there on first use), and the API reads ~/.locci/ai/mcp.json when it has no MCP config (`1850b94`)
 - faster CLI agent turns on Gemma: prompt-cache warm-up at chat start, history sent unchanged until it is long, no default thinking (`d7aa107`)
+- the TUI shows how many background tasks are running under the input (2 tasks), ahead of the list (`5a0a770`)
 
 ### Fixed
 
