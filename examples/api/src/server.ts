@@ -161,6 +161,24 @@ const webTools: ToolSet | undefined =
   webToolNames.length > 0 ? Object.fromEntries(webToolNames.map((n) => [n, allTools[n]])) : undefined;
 console.log(`  ✓ web chat tools: ${webToolNames.join(', ') || 'none'}`);
 
+// The MCP tools a client that runs `shell` itself (the CLI, the TUI) gets on top
+// of its own tools and the built-ins. It works in its own folder, so an MCP
+// server on the API host's disk (filesystem) would point the model at the wrong
+// machine, and small models pick it over `shell`; tools that work elsewhere
+// (loccibox's sandboxes and boxes) are fine. CLI_TOOLS: a comma list of tool or
+// MCP server names, "all" or "none"; by default every MCP tool but filesystem's.
+const cliMcpToolNames = (() => {
+  const setting = (process.env.CLI_TOOLS ?? '').trim();
+  if (setting === 'none') return [];
+  if (setting === 'all') return Object.keys(mcpTools);
+  if (!setting) return mcpServers.filter((s) => s.name !== 'filesystem').flatMap((s) => s.toolNames);
+  const byServer = new Map(mcpServers.map((s) => [s.name, s.toolNames]));
+  const names = setting.split(',').map((n) => n.trim());
+  return [...new Set(names.flatMap((n) => byServer.get(n) ?? (n in mcpTools ? [n] : [])))];
+})();
+const cliMcpTools: ToolSet = Object.fromEntries(cliMcpToolNames.map((n) => [n, mcpTools[n]]));
+console.log(`  ✓ CLI MCP tools: ${cliMcpToolNames.join(', ') || 'none'}`);
+
 // --- Context budget (web endpoint) ------------------------------------------
 // How much conversation /api/chat can send: the model's window minus what every
 // request already spends on the system prompt and tool schemas (measured from
@@ -274,6 +292,8 @@ const wiring = () => ({
   gateway: baseURL,
   tools: tools ? Object.keys(tools).length : 0,
   toolNames: tools ? Object.keys(tools) : [],
+  /** What a client that runs `shell` gets from this server, besides its own tools. */
+  cliToolNames: [...cliMcpToolNames.filter((n) => !(n in builtin.tools)), ...Object.keys(builtin.tools)],
   mcp: mcpServers.map(({ name, ok, toolCount, error }) => ({ name, ok, toolCount, error })),
   threadStore: threadStore ? 'libsql' : 'none',
   resumable: replyStreams?.name ?? 'off',
@@ -498,16 +518,15 @@ app.post('/chat', requireUser, async (req, res) => {
         ? [system, shellPrompt({ cwd, platform, files: 'write_file' in onClient || 'edit_file' in onClient })].filter(Boolean).join('\n\n')
         : system,
     messages: !withImage ? messages : seesImages ? imagesFirst(messages) : describeModelImages(messages),
-    // A client that runs `shell` works in its own folder; the MCP servers'
-    // file tools would read the API host's disk instead, and small models pick
-    // them over `shell`. So it gets the built-ins (which win a clash) only.
+    // A client that runs `shell` gets its own tools, the built-ins (which win a
+    // clash) and the CLI_TOOLS MCP tools (see cliMcpToolNames).
     // A picked model that can't call tools would print the call as text (as
     // in /api/chat); the configured MODEL keeps them, as before.
     tools:
       chatModelId !== modelId && !supportsTools(chatModelId)
         ? undefined
         : hasClientTools
-          ? { ...onClient, ...builtin.tools }
+          ? { ...cliMcpTools, ...onClient, ...builtin.tools }
           : tools,
     // Turn a single request into a tool-calling loop: the model can call a
     // tool, get the result, and keep going until it answers (or 8 steps).

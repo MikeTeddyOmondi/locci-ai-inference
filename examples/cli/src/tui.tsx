@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Markdown } from './markdown.js';
 import {
   API,
+  CLIENT_TOOLS,
   DECLINED_PREFIX,
   editPreview,
   parseThink,
@@ -397,10 +398,13 @@ function App() {
   useEffect(() => {
     let alive = true;
     fetch(`${API}/info`)
-      .then((r) => r.json() as Promise<{ provider: string; model: string; tools: number }>)
+      .then((r) => r.json() as Promise<{ provider: string; model: string; tools: number; cliToolNames?: string[] }>)
       .then((d) => {
         if (!alive) return;
-        setFooter(`${d.provider} ${d.model}${d.tools ? ` · ${d.tools} tools` : ''}`);
+        // The tools this chat gets: its own, plus the server's for a client that
+        // runs `shell` (an older API without cliToolNames: its total).
+        const n = d.cliToolNames ? CLIENT_TOOLS.length + d.cliToolNames.length : d.tools;
+        setFooter(`${d.provider} ${d.model}${n ? ` · ${n} tools` : ''}`);
       })
       .catch(() => alive && setFooter('server offline'));
     fetchModels()

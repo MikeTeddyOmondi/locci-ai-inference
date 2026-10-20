@@ -9,7 +9,7 @@ import { describeResult, installsOutside, runShell } from './shell.js';
 import { describeTasks, findTask, firstOutput, startTask, stopTask, tail, taskStatus } from './tasks.js';
 
 /** The client tools `chat` and the TUI run. */
-const CLIENT_TOOLS = ['shell', 'read_file', 'write_file', 'edit_file', 'tasks'];
+export const CLIENT_TOOLS = ['shell', 'read_file', 'write_file', 'edit_file', 'tasks'];
 
 /** What needs a yes first. Reads don't: they stay inside the folder. */
 export type Action =
