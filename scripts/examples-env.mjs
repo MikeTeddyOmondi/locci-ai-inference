@@ -74,7 +74,7 @@ if (!fs.existsSync(apiEnv) || force) {
     'LOCCI_AI_BASE_URL=http://localhost:8080/v1',
     `LOCCI_AUTH_URL=${authUrl}`,
     `LOCCI_API_KEY=${key}`,
-    'MODEL=qwen3-1.7b',
+    'MODEL=gemma-4-e2b',
     'PORT=3939',
     'CORS_ORIGIN=http://localhost:5173,http://localhost:4173',
     '',

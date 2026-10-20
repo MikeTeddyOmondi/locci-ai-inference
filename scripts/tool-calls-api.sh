@@ -10,7 +10,7 @@ set -u
 
 BASE="${1:-http://localhost:8080}"
 TOKEN="${TOKEN:-$("$(dirname "$0")/locci-auth-token.sh")}"
-MODEL="${MODEL:-qwen3-1.7b}"
+MODEL="${MODEL:-gemma-4-e2b}"
 FAIL=0
 
 pass() { echo "PASS $1"; }

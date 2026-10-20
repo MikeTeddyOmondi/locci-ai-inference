@@ -14,9 +14,9 @@ Each node is one `llama-server` process serving one GGUF model over an OpenAI-co
 
 | Service | Pool | Model file | Profile |
 | --- | --- | --- | --- |
-| `llama-coder-1` | `/coder` (id `qwen3-1.7b`) | `Qwen3-1.7B-Q4_K_M.gguf` | default |
+| `llama-coder-1` | `/coder` (id `qwen3-1.7b`) | `Qwen3-1.7B-Q4_K_M.gguf` | `qwen3` |
 | `llama-qwen25-coder-1` | `/qwen25-coder` (id `qwen2.5-coder-1.5b`) | `qwen2.5-coder-1.5b-instruct-q4_k_m.gguf` | `qwen25` |
-| `llama-gemma-1` | `/gemma` (id `gemma-4-e2b`) | `gemma-4-E2B-it-Q4_K_M.gguf` + `gemma-4-E2B-it-mmproj-F16.gguf` | `gemma` |
+| `llama-gemma-1` | `/gemma` (id `gemma-4-e2b`) | `gemma-4-E2B-it-Q4_K_M.gguf` + `gemma-4-E2B-it-mmproj-F16.gguf` | default |
 | `llama-vision-1` | `/vision` | `PaddleOCR-VL-1.6.gguf` + `PaddleOCR-VL-1.6-mmproj.gguf` | `vision` |
 | `llama-embed-1` | `/embed` | `nomic-embed-text-v1.5.Q4_K_M.gguf` | `embed` |
 
@@ -160,11 +160,11 @@ Colima VM, 4 vCPU, 7.7 GiB RAM, CPU only, b11434:
 | coder (Qwen3-1.7B Q4_K_M, `-c 32768 --parallel 2`, q8_0 KV, `--cache-ram 1024`) | 3.1 GiB just after start; 4.2 GiB under a 13,000-token prompt | ~50 tokens/s generation; ~190 tokens/s on short prompts, 13,000-token prompts 70 to 90 s |
 | coder, previous settings (`-c 16384 --parallel 2`, f16 KV) | ~2.8 GiB idle, plateaus at ~3.8 GiB under tool-calling load | |
 | vision (PaddleOCR-VL 1.6 + F16 mmproj) | ~1.5 GiB | 13 to 14 tokens/s generation; **image prompts ~2.8 tokens/s**: 110 to 180 s per image |
-| gemma (Gemma 4 E2B Q4_K_M + F16 mmproj, `-c 16384 --parallel 2`, q8_0 KV, opt-in) | 2.9 to 3.1 GiB | ~33 tokens/s generation; images 5 to 6 s each |
+| gemma (Gemma 4 E2B Q4_K_M + F16 mmproj, `-c 65536 --parallel 2`, q8_0 KV, default) | 2.9 to 3.1 GiB | ~33 tokens/s generation; images 5 to 6 s each |
 | embed (nomic Q4_K_M) | ~100 to 150 MiB | |
 | qwen25-coder (Qwen2.5-Coder-1.5B Q4_K_M, `-c 8192`, opt-in) | 2.3 GiB just after start; 1.25 GiB measured after hours of running | ~56 tokens/s generation |
 
-`just up` starts only the Qwen3 node, which leaves room for its 16k window; `just up-all` adds the opt-in pools (qwen2.5-coder, vision, embed). Adding up the figures below, all four at once would need ~8 GiB at peak, more than the 7.7 GiB VM, so start the others only when you use them (vision and qwen2.5-coder together are the risky pair). There is no room for a second Qwen3 node or a bigger model.
+`just up` starts only the Gemma node; `just up-all` adds the opt-in pools (qwen3, qwen2.5-coder, vision, embed). Adding up the figures below, all of them at once would need ~11 GiB at peak, more than the 7.7 GiB VM, so start the others only when you use them (vision and qwen2.5-coder together are the risky pair). There is no room for a second Qwen3 node or a bigger model.
 
 **Memory: the prompt cache.** Besides the fixed KV cache, llama-server keeps recent prompts in host RAM to skip re-processing them (that is what makes a repeat tool-calling request 5 s instead of 25 s). Its default cap is 8192 MiB, more than this VM has. With ~5,200-token tool prompts the Qwen3 node grew to 4.3 GiB and the kernel's OOM killer took it (`dmesg`: `Out of memory: Killed process ... (llama-server) ... anon-rss:4342592kB`); requests in the following seconds got `503 Loading model` while it restarted. `--cache-ram 1024` bounds it: measured with `RssAnon` over three full `just examples-check` runs, 2.83 → 3.49 → 3.76 → 3.78 GiB, no restarts. `docker stats` right after a restart overstates memory (it counts the model file's page cache); `grep RssAnon /proc/1/status` inside the container is what the OOM killer counts. A 7B Q4_K_M model needs ~4.5 to 5 GiB per node.
 

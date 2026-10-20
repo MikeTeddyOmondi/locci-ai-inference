@@ -4,7 +4,7 @@ import type { LanguageModel } from 'ai';
 // Replaces locci-chat-cli's PROVIDER switch (anthropic / openai / groq): every
 // model call goes through the Locci AI Gateway via @locci/ai-sdk, so these
 // examples exercise the SDK the same way a real client would.
-const DEFAULT_MODEL = 'qwen3-1.7b'; // the gateway's tool-calling model
+const DEFAULT_MODEL = 'gemma-4-e2b'; // the pool `just up` starts
 
 export interface Resolved {
   provider: 'locci';
@@ -40,7 +40,7 @@ const MODEL_INFO: Record<string, Omit<ChatModel, 'id'> & { contextTokens?: numbe
   // No thinkWithTools: with the write_file rule and the unchanged-write guard,
   // CLI file edits passed as often without thinking (6/8 and 3/3, as with it)
   // at ~2.5x the speed (BACKLOG.md). /think on still turns it on.
-  'gemma-4-e2b': { description: 'Chat, tools and images (on trial)', tools: true, images: true, contextTokens: 32768 },
+  'gemma-4-e2b': { description: 'Chat, tools and images', tools: true, images: true, contextTokens: 32768 },
   // Needs a task prompt (`OCR:`) rather than a question, and minutes per image on CPU.
   'baidu-ocr-vision': { description: 'Document OCR (API only)', tools: false, disabled: true },
 };

@@ -30,17 +30,17 @@ models *flags:
 
 # -- stack --------------------------------------------------------------------
 
-# Build and start the stack with the qwen3-1.7b pool, waiting until it is healthy.
+# Build and start the stack with the gemma-4-e2b pool, waiting until it is healthy.
 up:
     docker compose up --build -d --wait --wait-timeout 600
 
-# Start with the optional qwen2.5-coder, vision and embeddings pools and Ursula as well.
+# Start with the optional qwen3, qwen2.5-coder, vision and embeddings pools and Ursula as well.
 up-all:
-    docker compose --profile qwen25 --profile vision --profile embed --profile ursula up --build -d --wait --wait-timeout 900
+    docker compose --profile qwen3 --profile qwen25 --profile vision --profile embed --profile ursula up --build -d --wait --wait-timeout 900
 
 # Stop and remove the stack (all profiles).
 down:
-    docker compose --profile qwen25 --profile gemma --profile vision --profile embed --profile ursula down
+    docker compose --profile qwen3 --profile qwen25 --profile vision --profile embed --profile ursula down
 
 # Start Ursula for resumable web replies (RESUMABLE_STREAMS=ursula), reached only via KrakenD.
 ursula-up:
@@ -79,9 +79,9 @@ smoke:
 
 # Stream one chat completion through the edge, e.g. `just chat "Reverse a string in Go"`.
 # max_tokens caps the answer; a cut-off answer is flagged, not silent. Prompt
-# plus answer must fit the per-request window: 8192 tokens on qwen3-1.7b, 2048 on
-# qwen2.5-coder-1.5b (docs/LLAMA_SERVER.md).
-chat prompt="Write a Go function to reverse a string." model="qwen3-1.7b" max_tokens="1024":
+# plus answer must fit the per-request window: 32768 tokens on gemma-4-e2b, 16384
+# on qwen3-1.7b, 2048 on qwen2.5-coder-1.5b (docs/LLAMA_SERVER.md).
+chat prompt="Write a Go function to reverse a string." model="gemma-4-e2b" max_tokens="1024":
     #!/usr/bin/env sh
     set -eu
     TOKEN=$(scripts/locci-auth-token.sh)
@@ -165,7 +165,7 @@ check:
 chat-local prompt="Say hi in five words." tenant="dev-local":
     #!/usr/bin/env sh
     set -eu
-    BODY=$(python3 -c 'import json,sys; print(json.dumps({"model":"qwen3-1.7b","stream":True,"max_tokens":64,"messages":[{"role":"user","content":sys.argv[1]}]}))' '{{prompt}}')
+    BODY=$(python3 -c 'import json,sys; print(json.dumps({"model":"gemma-4-e2b","stream":True,"max_tokens":64,"messages":[{"role":"user","content":sys.argv[1]}]}))' '{{prompt}}')
     curl -sN http://localhost{{listen}}/v1/chat/completions \
       -H 'X-Locci-Tenant: {{tenant}}' -H 'Content-Type: application/json' -d "$BODY"
 

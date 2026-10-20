@@ -16,7 +16,7 @@ import { z } from "zod";
 import { createLocci } from "../src/index.ts";
 
 const locci = createLocci(process.env.TOKEN ? { accessToken: process.env.TOKEN } : {});
-const model = locci(process.env.MODEL ?? "qwen3-1.7b");
+const model = locci(process.env.MODEL ?? "gemma-4-e2b");
 const prompt = "What is the weather in Nairobi right now?";
 
 let executed: { city: string }[] = [];

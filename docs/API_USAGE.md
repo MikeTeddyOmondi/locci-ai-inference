@@ -81,7 +81,7 @@ curl -s "$LOCCI_AI_GATEWAY/v1/models" -H "Authorization: Bearer $TOKEN"
 }
 ```
 
-A model is listed even when its pool is not running (see `502` below). Locally `just up` starts the `qwen3-1.7b` pool; `just up-all` adds `qwen2.5-coder-1.5b`, vision and embeddings.
+A model is listed even when its pool is not running (see `502` below). Locally `just up` starts the `gemma-4-e2b` pool; `just up-all` adds `qwen3-1.7b`, `qwen2.5-coder-1.5b`, vision and embeddings.
 
 ### Chat completion
 

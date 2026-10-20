@@ -28,8 +28,8 @@ Everything below is wrapped in `.justfile`; run `just` to list the recipes. The 
 
 ```bash
 just auth        # terminal 1: locci-auth on :8787
-just models      # once (add --vision --embed for the optional pools)
-just up          # build, start the qwen3-1.7b pool, wait for healthy (just up-all adds qwen2.5-coder, vision, embed)
+just models      # once (add --qwen --vision --embed for the optional pools)
+just up          # build, start the gemma-4-e2b pool, wait for healthy (just up-all adds qwen3, qwen2.5-coder, vision, embed)
 just chat "Reverse a string in Go"     # flags answers cut off by max_tokens; just chat "..." <model> <max_tokens>
 just meter       # follow per-tenant usage
 just down
@@ -82,7 +82,7 @@ curl -N http://localhost:8080/v1/chat/completions \
 docker compose logs locci-ai-gateway | grep meter
 ```
 
-Optional pools: `docker compose --profile vision --profile embed up -d`. Until those run, `baidu-ocr-vision` and `embedding-nomic` return `502`.
+Optional pools: `docker compose --profile qwen3 --profile qwen25 --profile vision --profile embed up -d`. Until those run, `qwen3-1.7b`, `qwen2.5-coder-1.5b`, `baidu-ocr-vision` and `embedding-nomic` return `502`.
 
 KrakenD's `/v1/streams` endpoints front Ursula, the event stream store the example API uses with `RESUMABLE_STREAMS=ursula`. They check the token, name each stream after the token's subject (`/chats/<sub>--<stream>`) so callers only reach their own streams, and forward to `ursula:4437`, this repo's Ursula (`just ursula-up`, no published port since Ursula has no auth). In production the backend is `https://events.locci.cloud` instead, whose gateway checks the forwarded token again and has no DELETE route, so the store only appends. Until Ursula runs, those endpoints return `5xx` and the API records nothing (chat still works).
 
@@ -92,9 +92,9 @@ All on llama.cpp `server-b11434` (pinned), CPU only in the local Colima VM (4 vC
 
 | Requested `model` | Pool | Running | Measured here |
 | --- | --- | --- | --- |
-| `qwen3-1.7b` | `/coder` (1 node) | Qwen3-1.7B Q4_K_M, `--reasoning off`, 16384 tokens per request (q8_0 KV cache) | ~50 tokens/s; tool calling passes every check; 3.1 to 4.2 GiB |
-| `qwen2.5-coder-1.5b` | `/qwen25-coder` (1 node, opt-in) | Qwen2.5-Coder-1.5B-Instruct Q4_K_M | ~56 tokens/s; code generation; **cannot call tools**; 1.25 to 2.3 GiB |
-| `gemma-4-e2b` | `/gemma` (`--profile gemma`, on trial) | Gemma 4 E2B Q4_K_M + mmproj, `--reasoning off` | ~33 tokens/s; tool calling passes every check; reads images in seconds; 2.9 to 3.1 GiB |
+| `qwen3-1.7b` | `/coder` (`--profile qwen3`) | Qwen3-1.7B Q4_K_M, `--reasoning off`, 16384 tokens per request (q8_0 KV cache) | ~50 tokens/s; tool calling passes every check; 3.1 to 4.2 GiB |
+| `qwen2.5-coder-1.5b` | `/qwen25-coder` (`--profile qwen25`) | Qwen2.5-Coder-1.5B-Instruct Q4_K_M | ~56 tokens/s; code generation; **cannot call tools**; 1.25 to 2.3 GiB |
+| `gemma-4-e2b` | `/gemma` (default) | Gemma 4 E2B Q4_K_M + mmproj, `--reasoning off`, 32768 tokens per request | ~33 tokens/s; tool calling passes every check; reads images in seconds; 2.9 to 3.1 GiB |
 | `baidu-ocr-vision` | vision (`--profile vision`) | PaddleOCR-VL 1.6 + mmproj | Exact text and table recognition on the fixtures; 2 to 3 min per new image on CPU |
 | `embedding-nomic` | embed (`--profile embed`) | nomic-embed-text v1.5 Q4_K_M | 768 dims; inputs over 512 tokens fail until `-ub` is raised |
 
@@ -114,9 +114,9 @@ just chat "Solve two sum in JavaScript" qwen2.5-coder-1.5b 2048 # model, then ma
 just list-models                                           # ids the gateway routes
 ```
 
-`just list-models` lists every id even when its pool is stopped (that request gets a `502`). `just up` starts the `qwen3-1.7b` pool; `just up-all` adds qwen2.5-coder, vision and embed. Examples per endpoint: [docs/API_USAGE.md](docs/API_USAGE.md) (curl) and [docs/SDK_USAGE.md](docs/SDK_USAGE.md).
+`just list-models` lists every id even when its pool is stopped (that request gets a `502`). `just up` starts the `gemma-4-e2b` pool; `just up-all` adds qwen3, qwen2.5-coder, vision and embed. Examples per endpoint: [docs/API_USAGE.md](docs/API_USAGE.md) (curl) and [docs/SDK_USAGE.md](docs/SDK_USAGE.md).
 
-Ids name the model running in each pool. Swap files with `.env` (see `.env.example`), or try one without editing: `CODER_MODEL=<file>.gguf docker compose up -d llama-coder-1`. Why these models, what was tried, and candidates (Qwen 3.5, Gemma 4, LFM2.5, Unlimited-OCR, Qwen3-Embedding): [docs/SLMS.md](docs/SLMS.md). Flags, context per request (16384 tokens on `qwen3-1.7b`, 2048 on `qwen2.5-coder-1.5b`; see [API_USAGE.md](docs/API_USAGE.md#context-window)) and performance: [docs/LLAMA_SERVER.md](docs/LLAMA_SERVER.md).
+Ids name the model running in each pool. Swap files with `.env` (see `.env.example`), or try one without editing: `CODER_MODEL=<file>.gguf docker compose up -d llama-coder-1`. Why these models, what was tried, and candidates (Qwen 3.5, Gemma 4, LFM2.5, Unlimited-OCR, Qwen3-Embedding): [docs/SLMS.md](docs/SLMS.md). Flags, context per request (32768 tokens on `gemma-4-e2b`, 16384 on `qwen3-1.7b`, 2048 on `qwen2.5-coder-1.5b`; see [API_USAGE.md](docs/API_USAGE.md#context-window)) and performance: [docs/LLAMA_SERVER.md](docs/LLAMA_SERVER.md).
 
 ## Router development
 
