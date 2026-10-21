@@ -44,6 +44,7 @@ and the git hooks keep the list complete; see [CONTRIBUTING.md](CONTRIBUTING.md#
 - CLI agent tools for chat and the TUI (shell, read, write and edit files with approval, folder trust, YOLO via --yolo or /auto, !commands, Esc to stop), TUI composer, /model, /think and history, gemma-4-e2b by default (`7d1daa4`)
 - compiled CLI binary (just examples-cli-build), Gemma at 32768 tokens per request with older tool output trimmed per round, /chat keep-alive pings and one clear context error; mcp.json from ~/.locci/ai in examples-env, tmp/ ignored (`e3b7c26`)
 - CLI background tasks (shell background, tasks tool, !cmd &, ctrl+b, /tasks, /kill), yes-to-all at approvals, 30-round cap with a repeat guard, a guard on installs into a parent project, and commands tied to the CLI so none outlive it (`96d90d6`)
+- the web chat offers loccibox's agent boxes (box_create, box_exec, box_write_file, box_read_file, box_stop) kept per signed-in user, and says it searches the web (`ac17b34`)
 
 ### Changed
 
