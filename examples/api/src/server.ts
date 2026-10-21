@@ -30,6 +30,7 @@ import {
 } from './context.js';
 import { clearlyNoSearch, earlierSearches, planSearchQuery, relevantResults } from './search-plan.js';
 import { builtinTools, clientTools, shellPrompt, webSystemPrompt } from './tools.js';
+import { boxesFor, WEB_BOX_TOOLS } from './boxes.js';
 import { LibsqlThreadStore, type ThreadStore, type ThreadWithMessages } from './threads.js';
 import { onShutdown, installShutdown } from './shutdown.js';
 import { connectMcpServers, hasMcpConfig, mcpConfigPath, type McpServerStatus } from './mcp.js';
@@ -62,7 +63,13 @@ const searchMode = (toolSet: ToolSet | undefined, s: SearchState) =>
 
 /** The web system prompt for a request's tool set (see webSystemPrompt). */
 const webPrompt = (toolSet: ToolSet | undefined, s: SearchState) =>
-  webSystemPrompt({ now: new Date(), search: searchMode(toolSet, s), weather: !!toolSet?.weather });
+  webSystemPrompt({
+    now: new Date(),
+    search: searchMode(toolSet, s),
+    autoSearch: AUTO_SEARCH && !!toolSet?.search,
+    weather: !!toolSet?.weather,
+    boxes: !!toolSet?.box_exec,
+  });
 
 /** The system prompt for a step that must answer with no tools. */
 const answerPrompt = (s: SearchState) =>
@@ -150,10 +157,11 @@ const tools: ToolSet | undefined = Object.keys(allTools).length > 0 ? allTools :
 
 // The web chat's tools. A 1.7B model handed 19 tools calls whatever looks
 // plausible (the loccibox sandbox to "run" a tutorial, filesystem tools on
-// invented paths), so /api/chat offers only the built-ins by default; the CLI
-// and TUI keep every tool. WEB_TOOLS: a comma list of tool names, or "all".
+// invented paths), so /api/chat offers the built-ins and loccibox's agent boxes
+// (a Linux box to run code in, see boxes.ts) by default, not the filesystem
+// server or box_list. WEB_TOOLS: a comma list of tool names, or "all".
 const webToolNames = (() => {
-  const setting = (process.env.WEB_TOOLS ?? Object.keys(builtin.tools).join(',')).trim();
+  const setting = (process.env.WEB_TOOLS ?? [...Object.keys(builtin.tools), ...WEB_BOX_TOOLS].join(',')).trim();
   if (setting === 'all') return Object.keys(allTools);
   return setting.split(',').map((n) => n.trim()).filter((n) => n in allTools);
 })();
@@ -654,7 +662,6 @@ app.post('/api/chat', requireUser, async (req, res) => {
     chatModel = modelFor(requested);
     chatModelId = requested;
   }
-  const chatTools = supportsTools(chatModelId) ? webTools : undefined;
   // A photo sent to a model that can't see it would be dropped silently; say so
   // instead. Photos earlier in the thread become notes (describeImages below).
   const seesImages = supportsImages(chatModelId);
@@ -669,6 +676,16 @@ app.post('/api/chat', requireUser, async (req, res) => {
   const threadId = typeof rawThreadId === 'string' && THREAD_ID.test(rawThreadId) ? rawThreadId : undefined;
   const messageId = [...messages].reverse().find((m) => m.role === 'user')?.id ?? '';
   const user = userOf(res);
+  // Signed in, each user gets only the boxes made in their own chats (boxes.ts).
+  const chatTools = !supportsTools(chatModelId)
+    ? undefined
+    : auth.mode === 'locci'
+      ? boxesFor(webTools, user.id)
+      : webTools;
+  // Work in a box takes more calls than a search (create, write, run, fix, run).
+  const boxes = !!chatTools?.box_exec;
+  const maxSteps = boxes ? 10 : MAX_STEPS;
+  const maxToolCalls = boxes ? 8 : MAX_TOOL_CALLS;
   const key = threadId ? replyKey(user.id, threadId) : '';
   let recorder: Recorder | undefined;
   let abortSignal: AbortSignal | undefined;
@@ -749,7 +766,7 @@ app.post('/api/chat', requireUser, async (req, res) => {
       model: guardedModel,
       system: webPrompt(chatTools, { searched: searchedFirst, earlier }),
       messages: history,
-      stopWhen: stepCountIs(MAX_STEPS),
+      stopWhen: stepCountIs(maxSteps),
       tools: chatTools,
       abortSignal,
       prepareStep: ({ stepNumber, steps }) => {
@@ -759,7 +776,7 @@ app.post('/api/chat', requireUser, async (req, res) => {
         // make several per step), or when the user attached the source to read.
         // The tools are removed, not just switched off: with their schemas still in
         // the prompt the model writes a <tool_call> out as text instead.
-        if (stepNumber >= MAX_STEPS - 1 || calls.length >= MAX_TOOL_CALLS || attached) {
+        if (stepNumber >= maxSteps - 1 || calls.length >= maxToolCalls || attached) {
           return { activeTools: [], toolChoice: 'none', system: answerPrompt({ searched, earlier }) };
         }
         // One search per turn, and with AUTO_SEARCH only the one the API ran.

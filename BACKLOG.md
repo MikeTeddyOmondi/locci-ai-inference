@@ -31,6 +31,13 @@ Refreshing the web chat mid-reply loses the reply and the question just sent: th
 - [ ] The search planning step before the first chunk is not replayed (there is nothing to show yet).
 - [ ] KrakenD CE (2.13) held a streamed GET from Ursula until about 4 KB had built up, so the Ursula store reads with long-polls. Anything else that needs live SSE through KrakenD should be measured first; the chat endpoint is fine because a reply crosses 4 KB quickly, but its first tokens arrive in batches.
 
+## Agent boxes in the web chat
+
+The web chat offers loccibox's box tools (see examples/README.md). The MCP server runs with the API's one loccibox key, so loccibox sees one owner for every web user; `examples/api/src/boxes.ts` keeps each user to the boxes made in their chats, in memory.
+
+- [ ] A loccibox identity per web user (a locci-box key, or the user's own Locci token if locci-box accepts it), so locci-box enforces ownership itself and box ids survive an API restart.
+- [ ] Keep the box id per thread on the server (with `THREAD_STORE=libsql`), so a chat reattaches to its box after a restart instead of creating a new one.
+
 ## CLI agent: shell commands, resume, compaction
 
 Next up: the CLI as a coding agent in whatever folder `locci-chat` is started from (a released CLI on the PATH, e.g. `~/src/mt0/test-project`), not the folder it is installed in.

@@ -133,6 +133,9 @@ export function coveredByEarlier(query: string, earlier: EarlierSearch[]): boole
 // Requests the planner over-searches, caught by wording before it runs.
 const WEATHER = /\b(weather|forecast|temperature|raining|humid(ity)?)\b/i;
 const TRANSLATE = /\btranslat(e|ion)\b/i;
+// Questions about the assistant itself ("what tools do you have?"); the planner searched for those.
+const ABOUT_YOU =
+  /^\s*(what|which)\s+(tools|capabilities|abilities|features)\s+(do\s+you\s+have|can\s+you\s+use)\b|^\s*what\s+can\s+you\s+do\b|^\s*who\s+are\s+you\b/i;
 const TRANSFORM =
   /^\s*(please\s+)?(can you\s+)?(make|rewrite|rephrase|reword|shorten|simplify|expand|reformat|format|fix|correct|summari[sz]e|condense|turn|convert)\b/i;
 const REFERS_BACK = /\b(it|that|this|these|those|above|your (answer|reply|response)|the (text|previous|last) )/i;
@@ -145,6 +148,9 @@ const REFERS_BACK = /\b(it|that|this|these|those|above|your (answer|reply|respon
 export function clearlyNoSearch(ask: string, opts: { weatherTool: boolean; hasHistory: boolean }): boolean {
   if (opts.weatherTool && WEATHER.test(ask)) return true;
   if (TRANSLATE.test(ask)) return true;
+  if (ABOUT_YOU.test(ask)) return true;
+  // Work in an agent box, named by its id or a box tool: nothing to look up.
+  if (/\bbox_\w+/.test(ask)) return true;
   return opts.hasHistory && TRANSFORM.test(ask) && REFERS_BACK.test(ask);
 }
 

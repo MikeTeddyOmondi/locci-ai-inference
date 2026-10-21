@@ -43,7 +43,11 @@ export function webSystemPrompt(opts: {
    * `earlier`: no search this turn, but earlier turns' results are in the conversation.
    */
   search: 'available' | 'done' | 'earlier' | 'none';
+  /** The API searches before the model runs (AUTO_SEARCH), so `search` is not among its tools. */
+  autoSearch?: boolean;
   weather: boolean;
+  /** loccibox's agent boxes (box_create, box_exec, ...) are among the tools. */
+  boxes?: boolean;
 }): string {
   const today = opts.now.toISOString().slice(0, 10);
   const rules: string[] = [];
@@ -74,7 +78,26 @@ export function webSystemPrompt(opts: {
         'out of date.',
     );
   }
+  if (opts.autoSearch && opts.search !== 'done') {
+    rules.push(
+      'This app searches the web for you before you answer when a question needs current facts; the results ' +
+        'then appear in the conversation as a search tool result. If asked what you can do, say you can search the web.',
+    );
+  }
   if (opts.weather) rules.push('For weather, use the weather tool.');
+  if (opts.boxes) {
+    rules.push(
+      'You have a Linux computer to work in: a box (Debian 12 with apt, git, curl, gcc, Python 3 and Node 22; ' +
+        'internet access; files in /workspace). When the user wants code run, a package installed, a repo ' +
+        'cloned or a file made, call box_create once, then box_exec with its box_id to run shell commands. ' +
+        'box_write_file and box_read_file move whole files.',
+      'To run a program longer than one line, save it with box_write_file (e.g. primes.py), then box_exec ' +
+        '"python3 primes.py"; never put a multi-line program in python3 -c or node -e. If a command fails, read ' +
+        'the error, fix the file and run it again before answering.',
+      'Reuse the box_id from earlier in this conversation instead of creating another box; it keeps its files ' +
+        'and installs. If a box is not found, create a new one. Report the output that answers the user.',
+    );
+  }
   rules.push(
     'Files and pasted text the user attaches are included in their message in full. Read them there; never ' +
       'use file or directory tools to open an attachment.',
